@@ -17,7 +17,13 @@ typedef struct
 // Global variables for graceful shutdown
 static uv_tcp_t *global_server = NULL;
 static uv_signal_t sigint_handle;
+#ifndef _WIN32
 static uv_signal_t sigterm_handle;
+#endif
+#ifdef _WIN32
+static uv_signal_t sigbreak_handle;
+static uv_signal_t sighup_handle;
+#endif
 static volatile int shutdown_requested = 0;
 
 // Allocation callback: returns the preallocated buffer for each connection.
@@ -130,8 +136,16 @@ void on_signal_closed(uv_handle_t *handle)
 {
     if (handle == (uv_handle_t *)&sigint_handle)
         printf("SIGINT handler closed\n");
+#ifndef _WIN32
     else if (handle == (uv_handle_t *)&sigterm_handle)
         printf("SIGTERM handler closed\n");
+#endif
+#ifdef _WIN32
+    else if (handle == (uv_handle_t *)&sigbreak_handle)
+        printf("SIGBREAK handler closed\n");
+    else if (handle == (uv_handle_t *)&sighup_handle)
+        printf("SIGHUP handler closed\n");
+#endif
     else
         printf("Unknown signal handler closed\n");
 }
@@ -171,14 +185,48 @@ void graceful_shutdown()
     if (!uv_is_closing((uv_handle_t *)&sigint_handle))
         uv_close((uv_handle_t *)&sigint_handle, on_signal_closed);
 
+#ifndef _WIN32
     if (!uv_is_closing((uv_handle_t *)&sigterm_handle))
         uv_close((uv_handle_t *)&sigterm_handle, on_signal_closed);
+#endif
+
+#ifdef _WIN32
+    if (!uv_is_closing((uv_handle_t *)&sigbreak_handle))
+        uv_close((uv_handle_t *)&sigbreak_handle, on_signal_closed);
+
+    if (!uv_is_closing((uv_handle_t *)&sighup_handle))
+        uv_close((uv_handle_t *)&sighup_handle, on_signal_closed);
+#endif
 }
 
-// Signal callback: triggered when SIGINT or SIGTERM is received
+// Signal callback: triggered when signals are received
 void signal_handler(uv_signal_t *handle, int signum)
 {
-    printf("Received signal %d\n", signum);
+    if (signum == SIGINT)
+    {
+        printf("Received SIGINT (Ctrl+C), shutting down...\n");
+    }
+#ifndef _WIN32
+    else if (signum == SIGTERM)
+    {
+        printf("Received SIGTERM, shutting down...\n");
+    }
+#endif
+#ifdef _WIN32
+    else if (signum == SIGBREAK)
+    {
+        printf("Received SIGBREAK (Ctrl+Break), shutting down...\n");
+    }
+    else if (signum == SIGHUP)
+    {
+        printf("Received SIGHUP (console close), shutting down...\n");
+    }
+#endif
+    else
+    {
+        printf("Received unknown signal %d, shutting down...\n", signum);
+    }
+
     graceful_shutdown();
 }
 
@@ -198,11 +246,25 @@ void ecewo(unsigned short PORT)
     uv_tcp_init(loop, server);
     global_server = server;
 
+    // Initialize signal handlers
     uv_signal_init(loop, &sigint_handle);
+#ifndef _WIN32
     uv_signal_init(loop, &sigterm_handle);
+#endif
+#ifdef _WIN32
+    uv_signal_init(loop, &sigbreak_handle);
+    uv_signal_init(loop, &sighup_handle);
+#endif
 
+    // Start signal handlers
     uv_signal_start(&sigint_handle, signal_handler, SIGINT);
+#ifndef _WIN32
     uv_signal_start(&sigterm_handle, signal_handler, SIGTERM);
+#endif
+#ifdef _WIN32
+    uv_signal_start(&sigbreak_handle, signal_handler, SIGBREAK);
+    uv_signal_start(&sighup_handle, signal_handler, SIGHUP);
+#endif
 
     uv_tcp_simultaneous_accepts(server, 1);
 
