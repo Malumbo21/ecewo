@@ -129,6 +129,7 @@ void on_new_connection(uv_stream_t *server_stream, int status)
 // Called when the server handle is closed
 void on_server_closed(uv_handle_t *handle)
 {
+    (void)handle;
     printf("Server closed successfully\n");
     free(global_server);
     global_server = NULL;
@@ -162,6 +163,22 @@ void walk_callback(uv_handle_t *handle, void *arg)
         if (!uv_is_closing(handle))
             uv_close(handle, on_client_closed);
     }
+}
+
+// DEBUG
+static void count_handles(uv_handle_t *h, void *arg)
+{
+    int *cnt = arg;
+    if (!uv_is_closing(h))
+        ++*cnt;
+}
+
+// DEBUG
+void report_open_handles(uv_loop_t *loop)
+{
+    int count = 0;
+    uv_walk(loop, count_handles, &count);
+    fprintf(stderr, ">>> %d handle(s) still open\n", count);
 }
 
 // Graceful shutdown procedure
@@ -205,6 +222,8 @@ void graceful_shutdown()
 // Signal callback: triggered when signals are received
 void signal_handler(uv_signal_t *handle, int signum)
 {
+    (void)handle;
+
     if (signum == SIGINT)
     {
         printf("Received SIGINT (Ctrl+C), shutting down...\n");
@@ -232,22 +251,6 @@ void signal_handler(uv_signal_t *handle, int signum)
 
     graceful_shutdown();
     // uv_stop(uv_default_loop());
-}
-
-// DEBUG
-static void count_handles(uv_handle_t *h, void *arg)
-{
-    int *cnt = arg;
-    if (!uv_is_closing(h))
-        ++*cnt;
-}
-
-// DEBUG
-void report_open_handles(uv_loop_t *loop)
-{
-    int count = 0;
-    uv_walk(loop, count_handles, &count);
-    fprintf(stderr, ">>> %d handle(s) still open\n", count);
 }
 
 // Server startup function
