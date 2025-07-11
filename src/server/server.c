@@ -158,11 +158,18 @@ void on_signal_closed(uv_handle_t *handle)
 // Used to close all client connections
 void walk_callback(uv_handle_t *handle, void *arg)
 {
-    (void)arg; // Unused parameter
-    if (handle->type == UV_TCP && handle != (uv_handle_t *)global_server)
+    (void)arg;
+    if (!uv_is_closing(handle))
     {
-        if (!uv_is_closing(handle))
+        if (handle->type == UV_TCP && handle != (uv_handle_t *)global_server)
+        {
             uv_close(handle, on_client_closed);
+        }
+        else if (handle->type == UV_TIMER)
+        {
+            fprintf(stderr, "Closing remaining timer...\n");
+            uv_close(handle, NULL);
+        }
     }
 }
 
@@ -194,28 +201,33 @@ void graceful_shutdown()
     shutdown_requested = 1;
     printf("\nShutdown signal received. Shutting down gracefully...\n");
 
-    // Close the server first (stop accepting new connections)
     if (global_server && !uv_is_closing((uv_handle_t *)global_server))
     {
         uv_close((uv_handle_t *)global_server, on_server_closed);
     }
 
-    // Close existing client connections using uv_walk
+    // Stop signals
+    uv_signal_stop(&sigint_handle);
+#ifndef _WIN32
+    uv_signal_stop(&sigterm_handle);
+#endif
+#ifdef _WIN32
+    uv_signal_stop(&sigbreak_handle);
+    uv_signal_stop(&sighup_handle);
+#endif
+
     uv_walk(uv_default_loop(), walk_callback, NULL);
 
-    // Close signal handlers last
+    // Close signal handles last
     if (!uv_is_closing((uv_handle_t *)&sigint_handle))
         uv_close((uv_handle_t *)&sigint_handle, on_signal_closed);
-
 #ifndef _WIN32
     if (!uv_is_closing((uv_handle_t *)&sigterm_handle))
         uv_close((uv_handle_t *)&sigterm_handle, on_signal_closed);
 #endif
-
 #ifdef _WIN32
     if (!uv_is_closing((uv_handle_t *)&sigbreak_handle))
         uv_close((uv_handle_t *)&sigbreak_handle, on_signal_closed);
-
     if (!uv_is_closing((uv_handle_t *)&sighup_handle))
         uv_close((uv_handle_t *)&sighup_handle, on_signal_closed);
 #endif
