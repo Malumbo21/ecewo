@@ -51,7 +51,8 @@ void on_write_end(uv_write_t *req, int status)
 // Called when the connection is closed; frees the client struct.
 void on_client_closed(uv_handle_t *handle)
 {
-    client_t *client = (client_t *)handle;
+    // client_t *client = (client_t *)handle;
+    client_t *client = (client_t *)handle->data;
     if (client)
         free(client);
 }
@@ -170,7 +171,10 @@ static void count_handles(uv_handle_t *h, void *arg)
 {
     int *cnt = arg;
     if (!uv_is_closing(h))
+    {
         ++*cnt;
+        fprintf(stderr, "OPEN HANDLE: %s\n", uv_handle_type_name(h->type));
+    }
 }
 
 // DEBUG
