@@ -157,9 +157,7 @@ void walk_callback(uv_handle_t *handle, void *arg)
     if (handle->type == UV_TCP && handle != (uv_handle_t *)global_server)
     {
         if (!uv_is_closing(handle))
-        {
             uv_close(handle, on_client_closed);
-        }
     }
 }
 
@@ -228,25 +226,49 @@ void signal_handler(uv_signal_t *handle, int signum)
     }
 
     graceful_shutdown();
+    uv_stop(uv_default_loop());
 }
 
 // Server startup function
 void ecewo(unsigned short PORT)
 {
     uv_loop_t *loop = uv_default_loop();
-
-    uv_tcp_t *server = malloc(sizeof(uv_tcp_t));
+    uv_tcp_t *server = malloc(sizeof(*server));
     if (!server)
     {
         fprintf(stderr, "Failed to allocate server\n");
         return;
     }
 
-    memset(server, 0, sizeof(uv_tcp_t));
     uv_tcp_init(loop, server);
+
+    // Bind the server socket to the specified port
+    struct sockaddr_in addr;
+    uv_ip4_addr("0.0.0.0", PORT, &addr);
+    int r = uv_tcp_bind(server, (const struct sockaddr *)&addr, 0);
+    if (r)
+    {
+        fprintf(stderr, "Bind error: %s\n", uv_strerror(r));
+        uv_close((uv_handle_t *)server, (uv_close_cb)free);
+        uv_run(loop, UV_RUN_NOWAIT); // Trigger free callback
+        return;
+    }
+
+    // Start listening for incoming connections
+    uv_tcp_simultaneous_accepts(server, 1);
+    r = uv_listen((uv_stream_t *)server, 128, on_new_connection);
+    if (r)
+    {
+        fprintf(stderr, "Listen error: %s\n", uv_strerror(r));
+        uv_close((uv_handle_t *)server, (uv_close_cb)free);
+        uv_run(loop, UV_RUN_NOWAIT); // Trigger free callback
+        return;
+    }
+
+    // A valid server handle is now available
     global_server = server;
 
-    // Initialize signal handlers
+    // Initialize and start signal handlers
     uv_signal_init(loop, &sigint_handle);
 #ifndef _WIN32
     uv_signal_init(loop, &sigterm_handle);
@@ -256,7 +278,6 @@ void ecewo(unsigned short PORT)
     uv_signal_init(loop, &sighup_handle);
 #endif
 
-    // Start signal handlers
     uv_signal_start(&sigint_handle, signal_handler, SIGINT);
 #ifndef _WIN32
     uv_signal_start(&sigterm_handle, signal_handler, SIGTERM);
@@ -266,40 +287,15 @@ void ecewo(unsigned short PORT)
     uv_signal_start(&sighup_handle, signal_handler, SIGHUP);
 #endif
 
-    uv_tcp_simultaneous_accepts(server, 1);
-
-    struct sockaddr_in addr;
-    memset(&addr, 0, sizeof(addr));
-    uv_ip4_addr("0.0.0.0", PORT, &addr);
-
-    int result = uv_tcp_bind(server, (const struct sockaddr *)&addr, 0);
-    if (result)
-    {
-        fprintf(stderr, "Bind error: %s\n", uv_strerror(result));
-        free(server);
-        global_server = NULL;
-        return;
-    }
-
-    result = uv_listen((uv_stream_t *)server, 128, on_new_connection);
-    if (result)
-    {
-        fprintf(stderr, "Listen error: %s\n", uv_strerror(result));
-        free(server);
-        global_server = NULL;
-        return;
-    }
-
     printf("Server is running at: http://localhost:%d\n", PORT);
 
+    // Main event loop: runs until a signal stops it
     uv_run(loop, UV_RUN_DEFAULT);
 
-    printf("Event loop finished\n");
+    // After shutdown begins, process pending close callbacks
+    uv_run(loop, UV_RUN_DEFAULT);
 
-    // Process any pending callbacks
-    uv_run(loop, UV_RUN_NOWAIT);
-
-    // Make sure all handles are closed before closing the loop
+    // Close the loop
     int close_result = uv_loop_close(loop);
     if (close_result != 0)
     {
