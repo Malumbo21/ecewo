@@ -127,7 +127,8 @@ void on_new_connection(uv_stream_t *server_stream, int status)
 void on_server_closed(uv_handle_t *handle)
 {
     printf("Server closed successfully\n");
-    free(global_server);
+    // free(global_server);
+    free(handle);
     global_server = NULL;
 }
 
@@ -226,6 +227,23 @@ void signal_handler(uv_signal_t *handle, int signum)
     }
 
     graceful_shutdown();
+    // uv_stop(uv_default_loop());
+}
+
+// DEBUG
+static void count_handles(uv_handle_t *h, void *arg)
+{
+    int *cnt = arg;
+    if (!uv_is_closing(h))
+        ++*cnt;
+}
+
+// DEBUG
+void report_open_handles(uv_loop_t *loop)
+{
+    int outstanding = 0;
+    uv_walk(loop, count_handles, &outstanding);
+    fprintf(stderr, ">>> Hala %d açık handle var!\n", outstanding);
 }
 
 // Server startup function
@@ -297,6 +315,8 @@ void ecewo(unsigned short PORT)
     {
         uv_run(loop, UV_RUN_DEFAULT);
     }
+
+    report_open_handles(loop);
 
     // Close the loop
     int close_result = uv_loop_close(loop);
