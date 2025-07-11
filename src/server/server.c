@@ -226,7 +226,6 @@ void signal_handler(uv_signal_t *handle, int signum)
     }
 
     graceful_shutdown();
-    uv_stop(uv_default_loop());
 }
 
 // Server startup function
@@ -292,8 +291,12 @@ void ecewo(unsigned short PORT)
     // Main event loop: runs until a signal stops it
     uv_run(loop, UV_RUN_DEFAULT);
 
-    // After shutdown begins, process pending close callbacks
-    uv_run(loop, UV_RUN_DEFAULT);
+    // Check if loop still has active handles
+    // and process remaining close operations
+    if (uv_loop_alive(loop))
+    {
+        uv_run(loop, UV_RUN_DEFAULT);
+    }
 
     // Close the loop
     int close_result = uv_loop_close(loop);
