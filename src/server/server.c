@@ -38,19 +38,22 @@ void alloc_buffer(uv_handle_t *handle, size_t suggested_size, uv_buf_t *buf)
 void on_write_end(uv_write_t *req, int status)
 {
     if (status)
-    {
         fprintf(stderr, "Write error: %s\n", uv_strerror(status));
-    }
+
     write_req_t *wr = (write_req_t *)req;
-    free(wr->data);
-    free(wr);
+    if (wr)
+    {
+        free(wr->data);
+        free(wr);
+    }
 }
 
 // Called when the connection is closed; frees the client struct.
 void on_client_closed(uv_handle_t *handle)
 {
     client_t *client = (client_t *)handle;
-    free(client);
+    if (client)
+        free(client);
 }
 
 // Called when data is read
@@ -127,8 +130,7 @@ void on_new_connection(uv_stream_t *server_stream, int status)
 void on_server_closed(uv_handle_t *handle)
 {
     printf("Server closed successfully\n");
-    // free(global_server);
-    free(handle);
+    free(global_server);
     global_server = NULL;
 }
 
@@ -196,6 +198,8 @@ void graceful_shutdown()
     if (!uv_is_closing((uv_handle_t *)&sighup_handle))
         uv_close((uv_handle_t *)&sighup_handle, on_signal_closed);
 #endif
+
+    report_open_handles(uv_default_loop());
 }
 
 // Signal callback: triggered when signals are received
@@ -241,9 +245,9 @@ static void count_handles(uv_handle_t *h, void *arg)
 // DEBUG
 void report_open_handles(uv_loop_t *loop)
 {
-    int outstanding = 0;
-    uv_walk(loop, count_handles, &outstanding);
-    fprintf(stderr, ">>> Hala %d açık handle var!\n", outstanding);
+    int count = 0;
+    uv_walk(loop, count_handles, &count);
+    fprintf(stderr, ">>> %d handle(s) still open\n", count);
 }
 
 // Server startup function
@@ -311,7 +315,7 @@ void ecewo(unsigned short PORT)
 
     // Check if loop still has active handles
     // and process remaining close operations
-    if (uv_loop_alive(loop))
+    while (uv_loop_alive(loop))
     {
         uv_run(loop, UV_RUN_DEFAULT);
     }
