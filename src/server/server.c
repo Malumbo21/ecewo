@@ -296,6 +296,9 @@ void ecewo(unsigned short PORT)
 
     printf("Event loop finished\n");
 
+    // Process any pending callbacks
+    uv_run(loop, UV_RUN_NOWAIT);
+
     // Make sure all handles are closed before closing the loop
     int close_result = uv_loop_close(loop);
     if (close_result != 0)
