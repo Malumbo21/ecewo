@@ -326,6 +326,7 @@ Arena *arena_borrow(void) {
             arena_pool.total_allocated, ARENA_POOL_CAP);
 #endif
 
+  uv_mutex_unlock(&arena_pool.mutex);
   return arena;
 }
 
