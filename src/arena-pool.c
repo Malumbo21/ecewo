@@ -264,13 +264,6 @@ void arena_pool_destroy(void) {
 }
 
 Arena *arena_borrow(void) {
-  if (!arena_pool.initialized) {
-    // Fallback: direct allocation
-    LOG_DEBUG("Arena pool not initialized, falling back to direct allocation");
-    Arena *arena = calloc(1, sizeof(Arena));
-    return arena;
-  }
-
   uv_mutex_lock(&arena_pool.mutex);
 
   Arena *arena;
