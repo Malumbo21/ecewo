@@ -32,58 +32,52 @@ int tokenize_path(Arena *arena, const char *path, size_t path_len, tokenized_pat
   const char *p = path;
   const char *end = path + path_len;
 
+  path_segment_t segments[MAX_PATH_SEGMENTS];
+
   while (p < end) {
     if (*p != '/') {
-      segment_count++;
-
-      if (segment_count > MAX_PATH_SEGMENTS) {
-        LOG_DEBUG("Path too deep: %" PRIu8 " segments (max %d)", segment_count, MAX_PATH_SEGMENTS);
-        return -1;
-      }
-
-      // Skip to next '/' or end
-      while (p < end && *p != '/')
-        p++;
-    } else {
       p++;
+      continue;
     }
+
+    if (segment_count != 0) {
+      path_segment_t *prev = &segments[segment_count - 1];
+      segments[segment_count].len = (size_t) (p - prev->start) - prev->len - 1;
+      segments[segment_count].start = prev->start + prev->len + 1;
+    } else {
+      segments[segment_count].len = (size_t) (p - path);
+      segments[segment_count].start = path;
+    }
+
+    segment_count++;
+
+    if (segment_count > MAX_PATH_SEGMENTS) {
+      LOG_DEBUG("Path too deep: %" PRIu8 " segments (max %d)", segment_count, MAX_PATH_SEGMENTS);
+      return -1;
+    }
+
+    p++; // pass slash
   }
 
   if (segment_count == 0)
     return 0;
 
+  // can be removed capacity or count
+  result->count = segment_count;
   result->capacity = segment_count;
   result->segments = arena_alloc(arena, sizeof(path_segment_t) * segment_count);
   if (!result->segments)
     return -1;
 
-  p = path;
-  result->count = 0;
+  for (uint8_t i = 0; i < segment_count; ++i) {
+    path_segment_t *segment_ptr = &result->segments[i];
+    path_segment_t *raw_segment = &segments[i];
 
-  while (p < end && result->count < result->capacity) {
-    // Skip slashes
-    while (p < end && *p == '/')
-      p++;
-    if (p >= end)
-      break;
-
-    const char *start = p;
-
-    // Find end of segment
-    while (p < end && *p != '/')
-      p++;
-
-    size_t len = p - start;
-    if (len == 0)
-      continue;
-
-    path_segment_t *seg = &result->segments[result->count];
-    seg->start = start;
-    seg->len = len;
-    seg->is_param = (start[0] == ':');
-    seg->is_wildcard = (start[0] == '*');
-
-    result->count++;
+    // memcpy() did not used, is_param and is_wildcard are uninitialized in raw_segment
+    segment_ptr->start = raw_segment->start;
+    segment_ptr->len = raw_segment->len;
+    segment_ptr->is_param = (raw_segment->start[0] == ':');
+    segment_ptr->is_wildcard = (raw_segment->start[0] == '*');
   }
 
   return 0;
