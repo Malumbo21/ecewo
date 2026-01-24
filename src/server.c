@@ -595,7 +595,10 @@ int server_init(void) {
     return SERVER_INIT_FAILED;
 
   ecewo_server.initialized = 1;
-  atexit(server_cleanup);
+
+  const char *is_test = getenv("ECEWO_TEST_MODE");
+  if (!is_test || strcmp(is_test, "1") != 0)
+    atexit(server_cleanup);
 
   return SERVER_OK;
 }
