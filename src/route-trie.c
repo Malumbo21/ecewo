@@ -35,58 +35,45 @@ int tokenize_path(Arena *arena, const char *path, size_t path_len, tokenized_pat
   path_segment_t segments[MAX_PATH_SEGMENTS];
 
   while (p < end) { // producing segment consumes exactly one iteration
-    size_t passed = 0; // passed adjacent slash count
-
-    while (p < end && *p == '/') { // passes adjacent slashes
-      p++;
-      passed++;
-    }
-
-    // catches segment value
-    while (p < end && *p != '/')
+    while (p < end && *p == '/') // passes adjacent slashes
       p++;
 
-    // prepares segment in before slash
-    if (segment_count != 0) {
-      path_segment_t *prev = &segments[segment_count - 1];
-      const char *prev_ends_at = (prev->start + prev->len); // points before slash
+    if (p >= end)
+      break;
 
-      const char *start = prev_ends_at + passed;
-      segments[segment_count].start = start;
-      segments[segment_count].len = (size_t) (p - start);
-    } else {
-      segments[segment_count].start = path + passed;
-      segments[segment_count].len = (size_t) (p - path - passed);
-    }
+    const char *start = p;
+
+    while (p < end && *p != '/') // catches segment value
+      p++;
+
+    size_t len = (size_t) (p - start);
+    if (len == 0)
+      continue;
+
+    segments[segment_count].start = start;
+    segments[segment_count].len = len;
+    segments[segment_count].is_param = (start[0] == ':');
+    segments[segment_count].is_wildcard = (start[0] == '*');
 
     segment_count++;
 
     if (segment_count > MAX_PATH_SEGMENTS) {
-      LOG_DEBUG("Path too deep: %" PRIu8 " segments (max %d)", segment_count, MAX_PATH_SEGMENTS);
+      LOG_DEBUG("Path too deep: %" PRIu8 " segments (max %d)",
+                segment_count, MAX_PATH_SEGMENTS);
       return -1;
     }
   }
 
-  if (segments[segment_count - 1].len == 0) // removes empty segments, for `////` root path
-    segment_count--;
+  if (segment_count == 0)
+    return 0;
 
-  // can be removed capacity or count
   result->count = segment_count;
-  result->capacity = segment_count;
   result->segments = arena_alloc(arena, sizeof(path_segment_t) * segment_count);
   if (!result->segments)
     return -1;
 
-  for (uint8_t i = 0; i < segment_count; ++i) {
-    path_segment_t *segment_ptr = &result->segments[i];
-    path_segment_t *raw_segment = &segments[i];
-
-    // memcpy() did not used, is_param and is_wildcard are uninitialized in raw_segment
-    segment_ptr->start = raw_segment->start;
-    segment_ptr->len = raw_segment->len;
-    segment_ptr->is_param = (raw_segment->start[0] == ':');
-    segment_ptr->is_wildcard = (raw_segment->start[0] == '*');
-  }
+  memcpy(result->segments, segments,
+         segment_count * sizeof(path_segment_t));
 
   return 0;
 }
