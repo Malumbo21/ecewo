@@ -34,19 +34,29 @@ int tokenize_path(Arena *arena, const char *path, size_t path_len, tokenized_pat
 
   path_segment_t segments[MAX_PATH_SEGMENTS];
 
-  while (p < end) {
-    if (*p != '/') {
+  while (p < end) { // producing segment consumes exactly one iteration
+    size_t passed = 0; // passed adjacent slash count
+
+    while (p < end && *p == '/') { // passes adjacent slashes
       p++;
-      continue;
+      passed++;
     }
 
+    // catches segment value
+    while (p < end && *p != '/')
+      p++;
+
+    // prepares segment in before slash
     if (segment_count != 0) {
       path_segment_t *prev = &segments[segment_count - 1];
-      segments[segment_count].len = (size_t) (p - prev->start) - prev->len - 1;
-      segments[segment_count].start = prev->start + prev->len + 1;
+      const char *prev_ends_at = (prev->start + prev->len); // points before slash
+
+      const char *start = prev_ends_at + passed;
+      segments[segment_count].start = start;
+      segments[segment_count].len = (size_t) (p - start);
     } else {
-      segments[segment_count].len = (size_t) (p - path);
-      segments[segment_count].start = path;
+      segments[segment_count].start = path + passed;
+      segments[segment_count].len = (size_t) (p - path - passed);
     }
 
     segment_count++;
@@ -55,12 +65,10 @@ int tokenize_path(Arena *arena, const char *path, size_t path_len, tokenized_pat
       LOG_DEBUG("Path too deep: %" PRIu8 " segments (max %d)", segment_count, MAX_PATH_SEGMENTS);
       return -1;
     }
-
-    p++; // pass slash
   }
 
-  if (segment_count == 0)
-    return 0;
+  if (segments[segment_count - 1].len == 0) // removes empty segments, for `////` root path
+    segment_count--;
 
   // can be removed capacity or count
   result->count = segment_count;
