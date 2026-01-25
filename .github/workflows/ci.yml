@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [ '*' ]
+    branches: [ main ]
     paths-ignore:
       - '**/*.md'
   pull_request:
@@ -17,6 +17,7 @@ jobs:
   linux-gcc-build-test:
     name: Linux (GCC)
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     
     steps:
     - name: Checkout code
@@ -50,6 +51,7 @@ jobs:
   linux-clang-build-test:
     name: Linux (Clang)
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     
     steps:
     - name: Checkout code
@@ -84,7 +86,7 @@ jobs:
   macos-build-test:
     name: macOS
     runs-on: macos-latest
-    timeout-minutes: 30
+    timeout-minutes: 5
     
     steps:
     - name: Checkout code
@@ -159,6 +161,7 @@ jobs:
   windows-ucrt64-build-test:
     name: Windows (MinGW-w64 UCRT64)
     runs-on: windows-latest
+    timeout-minutes: 5
     defaults:
       run:
         shell: msys2 {0}
@@ -206,6 +209,7 @@ jobs:
   memory-check:
     name: Memory Leak Check (Valgrind)
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     
     steps:
     - name: Checkout code
@@ -239,6 +243,7 @@ jobs:
   sanitizers:
     name: ASAN/UBSAN
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     
     steps:
     - name: Checkout code
