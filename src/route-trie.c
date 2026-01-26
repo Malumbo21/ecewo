@@ -50,18 +50,18 @@ int tokenize_path(Arena *arena, const char *path, size_t path_len, tokenized_pat
     if (len == 0)
       continue;
 
+    if (segment_count > MAX_PATH_SEGMENTS) {
+      LOG_DEBUG("Path too deep: %" PRIu8 " segments (max %d)",
+                segment_count, MAX_PATH_SEGMENTS);
+      return -1;
+    }
+
     segments[segment_count].start = start;
     segments[segment_count].len = len;
     segments[segment_count].is_param = (start[0] == ':');
     segments[segment_count].is_wildcard = (start[0] == '*');
 
     segment_count++;
-
-    if (segment_count > MAX_PATH_SEGMENTS) {
-      LOG_DEBUG("Path too deep: %" PRIu8 " segments (max %d)",
-                segment_count, MAX_PATH_SEGMENTS);
-      return -1;
-    }
   }
 
   if (segment_count == 0)
