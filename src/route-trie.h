@@ -33,7 +33,6 @@ typedef struct
 {
   path_segment_t *segments;
   uint8_t count;
-  uint8_t capacity;
 } tokenized_path_t;
 
 typedef struct trie_node {

@@ -32,59 +32,48 @@ int tokenize_path(Arena *arena, const char *path, size_t path_len, tokenized_pat
   const char *p = path;
   const char *end = path + path_len;
 
-  while (p < end) {
-    if (*p != '/') {
-      segment_count++;
+  path_segment_t segments[MAX_PATH_SEGMENTS];
 
-      if (segment_count > MAX_PATH_SEGMENTS) {
-        LOG_DEBUG("Path too deep: %" PRIu8 " segments (max %d)", segment_count, MAX_PATH_SEGMENTS);
-        return -1;
-      }
-
-      // Skip to next '/' or end
-      while (p < end && *p != '/')
-        p++;
-    } else {
+  while (p < end) { // producing segment consumes exactly one iteration
+    while (p < end && *p == '/') // passes adjacent slashes
       p++;
-    }
-  }
 
-  if (segment_count == 0)
-    return 0;
-
-  result->capacity = segment_count;
-  result->segments = arena_alloc(arena, sizeof(path_segment_t) * segment_count);
-  if (!result->segments)
-    return -1;
-
-  p = path;
-  result->count = 0;
-
-  while (p < end && result->count < result->capacity) {
-    // Skip slashes
-    while (p < end && *p == '/')
-      p++;
     if (p >= end)
       break;
 
     const char *start = p;
 
-    // Find end of segment
-    while (p < end && *p != '/')
+    while (p < end && *p != '/') // catches segment value
       p++;
 
-    size_t len = p - start;
+    size_t len = (size_t) (p - start);
     if (len == 0)
       continue;
 
-    path_segment_t *seg = &result->segments[result->count];
-    seg->start = start;
-    seg->len = len;
-    seg->is_param = (start[0] == ':');
-    seg->is_wildcard = (start[0] == '*');
+    if (segment_count > MAX_PATH_SEGMENTS) {
+      LOG_DEBUG("Path too deep: %" PRIu8 " segments (max %d)",
+                segment_count, MAX_PATH_SEGMENTS);
+      return -1;
+    }
 
-    result->count++;
+    segments[segment_count].start = start;
+    segments[segment_count].len = len;
+    segments[segment_count].is_param = (start[0] == ':');
+    segments[segment_count].is_wildcard = (start[0] == '*');
+
+    segment_count++;
   }
+
+  if (segment_count == 0)
+    return 0;
+
+  result->count = segment_count;
+  result->segments = arena_alloc(arena, sizeof(path_segment_t) * segment_count);
+  if (!result->segments)
+    return -1;
+
+  memcpy(result->segments, segments,
+         segment_count * sizeof(path_segment_t));
 
   return 0;
 }
