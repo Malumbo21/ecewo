@@ -3,8 +3,7 @@
 #include "logger.h"
 #include <stdlib.h>
 
-typedef struct
-{
+typedef struct {
   uv_work_t work;
   uv_async_t async_send;
   void *context;
@@ -16,6 +15,8 @@ static void spawn_cleanup_cb(uv_handle_t *handle) {
   spawn_t *t = (spawn_t *)handle->data;
   if (t)
     free(t);
+
+  decrement_async_work();
 }
 
 static void spawn_async_cb(uv_async_t *handle) {
@@ -65,6 +66,8 @@ int spawn(void *context, spawn_handler_t work_fn, spawn_handler_t done_fn) {
   task->work_fn = work_fn;
   task->result_fn = done_fn;
 
+  increment_async_work();
+
   int result = uv_queue_work(
       uv_default_loop(),
       &task->work,
@@ -72,6 +75,7 @@ int spawn(void *context, spawn_handler_t work_fn, spawn_handler_t done_fn) {
       spawn_after_work_cb);
 
   if (result != 0) {
+    decrement_async_work();
     uv_close((uv_handle_t *)&task->async_send, NULL);
     free(task);
     return result;
