@@ -5,6 +5,7 @@
 #include "http.h"
 #include "uv.h"
 #include "llhttp.h"
+#include <stdatomic.h>
 
 #ifndef READ_BUFFER_SIZE
 #define READ_BUFFER_SIZE 16384
@@ -32,8 +33,13 @@ struct client_s {
   void *takeover_user_data;
 
   uv_timer_t *request_timeout_timer;
+  atomic_int refcount;
+  bool valid;
 };
 
 typedef struct client_s client_t;
+
+void client_unref(client_t *client);
+void client_ref(client_t *client);
 
 #endif

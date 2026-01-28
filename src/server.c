@@ -10,6 +10,8 @@
 #include "utils.h"
 #include "logger.h"
 
+static atomic_uint_fast64_t next_client_id = ATOMIC_VAR_INIT(1);
+
 #ifndef MAX_CONNECTIONS
 #define MAX_CONNECTIONS 10000
 #endif
@@ -80,6 +82,28 @@ static struct
 
 route_trie_t *global_route_trie = NULL;
 
+static void client_free_internal(client_t *client) {
+  if (!client)
+    return;
+  if (client->connection_arena)
+    arena_return(client->connection_arena);
+  free(client);
+}
+
+void client_ref(client_t *client) {
+  if (!client)
+    return;
+  atomic_fetch_add_explicit(&client->refcount, 1, memory_order_relaxed);
+}
+
+void client_unref(client_t *client) {
+  if (!client)
+    return;
+  int prev = atomic_fetch_sub_explicit(&client->refcount, 1, memory_order_acq_rel);
+  if (prev <= 1)
+    client_free_internal(client);
+}
+
 static void add_client_to_list(client_t *client) {
   client->next = ecewo_server.client_list_head;
   ecewo_server.client_list_head = client;
@@ -105,48 +129,40 @@ static void remove_client_from_list(client_t *client) {
 
 static void on_client_closed(uv_handle_t *handle) {
   client_t *client = (client_t *)handle->data;
-
-  if (client && client->taken_over) {
-    remove_client_from_list(client);
-    ecewo_server.active_connections--;
-    free(client);
-    return;
-  }
-
-  if (client) {
-    remove_client_from_list(client);
-    ecewo_server.active_connections--;
-
-    if (client->connection_arena)
-      arena_return(client->connection_arena);
-
-    free(client);
-  }
-}
-
-static void close_client(client_t *client) {
   if (!client)
     return;
 
-  if (client->closing || uv_is_closing((uv_handle_t *)&client->handle)) {
-    // Handle is already closing/closed,
-    // but client struct might still be in list
-    if (!client->closing) {
-      client->closing = true;
-      remove_client_from_list(client);
-      ecewo_server.active_connections--;
+  remove_client_from_list(client);
+  if (ecewo_server.active_connections > 0)
+    ecewo_server.active_connections--;
 
-      if (client->connection_arena)
-        arena_return(client->connection_arena);
+  client->valid = false;
 
-      free(client);
-    }
+  client_unref(client);
+}
+
+static void close_client(client_t *client) {
+  if (!client || client->closing)
     return;
+  
+  bool need_unref = (client->request_timeout_timer != NULL);
+  
+  if (client->request_timeout_timer) {
+    uv_timer_stop(client->request_timeout_timer);
+    uv_close((uv_handle_t *)client->request_timeout_timer, (uv_close_cb)free);
+    client->request_timeout_timer = NULL;
   }
-
+  
   client->closing = true;
+  client->valid = false;
+  
   uv_read_stop((uv_stream_t *)&client->handle);
-  uv_close((uv_handle_t *)&client->handle, on_client_closed);
+  
+  if (!uv_is_closing((uv_handle_t *)&client->handle))
+    uv_close((uv_handle_t *)&client->handle, on_client_closed);
+  
+  if (need_unref)
+    client_unref(client);
 }
 
 static void cleanup_idle_connections(uv_timer_t *handle) {
@@ -317,14 +333,14 @@ static void close_walk_cb(uv_handle_t *handle, void *arg) {
       if (client)
         close_client(client);
     }
-  } else if (handle->type == UV_TIMER) {
-    if (handle != (uv_handle_t *)ecewo_server.cleanup_timer) {
-      uv_timer_stop((uv_timer_t *)handle);
-      timer_data_t *data = (timer_data_t *)handle->data;
-      if (data)
-        free(data);
-      uv_close(handle, (uv_close_cb)free);
-    }
+    // } else if (handle->type == UV_TIMER) {
+    //   if (handle != (uv_handle_t *)ecewo_server.cleanup_timer) {
+    //     uv_timer_stop((uv_timer_t *)handle);
+    //     timer_data_t *data = (timer_data_t *)handle->data;
+    //     if (data)
+    //       free(data);
+    //     uv_close(handle, (uv_close_cb)free);
+    //   }
   } else if (handle->type == UV_SIGNAL) {
     uv_signal_stop((uv_signal_t *)handle);
     uv_close(handle, NULL);
@@ -605,10 +621,28 @@ static void on_request_timeout(uv_timer_t *handle) {
 
   LOG_ERROR("Request timeout - closing connection");
 
-  if (client->connection_arena)
-    arena_reset(client->connection_arena);
+  if (client) {
+    if (client->connection_arena)
+      arena_reset(client->connection_arena);
+    
+    client->request_timeout_timer = NULL;
+    close_client(client);
+    client_unref(client);
+  }
+  
+  uv_timer_stop(handle);
+  uv_close((uv_handle_t *)handle, (uv_close_cb)free);
+}
 
-  close_client(client);
+static bool stop_request_timer(client_t *client) {
+  if (!client || !client->request_timeout_timer)
+    return false;
+  
+  uv_timer_stop(client->request_timeout_timer);
+  uv_close((uv_handle_t *)client->request_timeout_timer, (uv_close_cb)free);
+  client->request_timeout_timer = NULL;
+  
+  return true;
 }
 
 static void on_read(uv_stream_t *stream, ssize_t nread, const uv_buf_t *buf) {
@@ -650,6 +684,7 @@ static void on_read(uv_stream_t *stream, ssize_t nread, const uv_buf_t *buf) {
       if (client->request_timeout_timer) {
         uv_timer_init(ecewo_server.loop, client->request_timeout_timer);
         client->request_timeout_timer->data = client;
+        client_ref(client);
       }
     }
 
@@ -667,8 +702,12 @@ static void on_read(uv_stream_t *stream, ssize_t nread, const uv_buf_t *buf) {
 
     switch (result) {
     case REQUEST_KEEP_ALIVE:
+      // The timer is stopped for async responses by write_completion_cb in response.c
+      bool had_timer = stop_request_timer(client);
       client->keep_alive_enabled = true;
       client->request_in_progress = false;
+      if (had_timer)
+        client_unref(client);
       break;
 
     case REQUEST_CLOSE:
@@ -679,7 +718,7 @@ static void on_read(uv_stream_t *stream, ssize_t nread, const uv_buf_t *buf) {
       // It may be PARSE_INCOMPLETE, need to wait for more data
       // or may be an async operation
       // request_in_progress should stay true
-      // don not close, do not reset
+      // do not close, do not reset
       break;
 
     default:
@@ -722,12 +761,15 @@ static void on_connection(uv_stream_t *server, int status) {
   if (!client)
     return;
 
+  client->valid = true;
   client->last_activity = uv_now(ecewo_server.loop);
   client->keep_alive_enabled = false;
   client->next = NULL;
   client->parser_initialized = false;
   client->request_in_progress = false;
   client->connection_arena = NULL;
+
+  atomic_init(&client->refcount, 1);
 
   if (client_connection_init(client) != 0) {
     free(client);

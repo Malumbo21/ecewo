@@ -24,12 +24,16 @@ typedef struct
 } write_req_t;
 
 static void end_request(client_t *client) {
+  if (!client)
+    return;
+
   client->request_in_progress = false;
 
   if (client->request_timeout_timer) {
     uv_timer_stop(client->request_timeout_timer);
     uv_close((uv_handle_t *)client->request_timeout_timer, (uv_close_cb)free);
     client->request_timeout_timer = NULL;
+    client_unref(client); // This is timer's ref, not write_req's
   }
 }
 
@@ -41,8 +45,10 @@ static void write_completion_cb(uv_write_t *req, int status) {
   if (!write_req)
     return;
 
-  if (write_req->client)
+  if (write_req->client) {
     end_request(write_req->client);
+    client_unref(write_req->client);
+  }
 
   if (write_req->arena) {
     arena_reset(write_req->arena);
@@ -55,6 +61,24 @@ static void write_completion_cb(uv_write_t *req, int status) {
     memset(write_req, 0, sizeof(write_req_t));
     free(write_req);
   }
+}
+
+static bool validate_client_for_response(Res *res) {
+  if (!res || !res->client_socket || !res->client_socket->data)
+    return false;
+
+  if (uv_is_closing((uv_handle_t *)res->client_socket))
+    return false;
+  
+  client_t *client = (client_t *)res->client_socket->data;
+  
+  if (!client->valid || client->closing)
+    return false;
+  
+  if (!uv_is_writable((uv_stream_t *)res->client_socket))
+    return false;
+  
+  return true;
 }
 
 // Sends 400 or 500
@@ -115,7 +139,8 @@ void send_error(Arena *arena, uv_tcp_t *client_socket, int error_code) {
     write_req->data = response;
     write_req->arena = arena;
     write_req->client = (client_t *)client_socket->data;
-
+    if (write_req->client)
+      client_ref(write_req->client);
     write_req->buf = uv_buf_init(response, (unsigned int)response_len);
 
     int res = uv_write(&write_req->req, (uv_stream_t *)client_socket,
@@ -124,8 +149,10 @@ void send_error(Arena *arena, uv_tcp_t *client_socket, int error_code) {
       LOG_ERROR("Write error: %s", uv_strerror(res));
       arena_reset(arena);
 
-      if (write_req->client)
+      if (write_req->client) {
         end_request(write_req->client);
+        client_unref(write_req->client);
+      }
     }
   } else {
     // Malloc path
@@ -167,6 +194,8 @@ void send_error(Arena *arena, uv_tcp_t *client_socket, int error_code) {
     write_req->data = response;
     write_req->arena = NULL;
     write_req->client = (client_t *)client_socket->data;
+    if (write_req->client)
+      client_ref(write_req->client);
     write_req->buf = uv_buf_init(response, (unsigned int)written);
 
     int res = uv_write(&write_req->req, (uv_stream_t *)client_socket,
@@ -178,8 +207,10 @@ void send_error(Arena *arena, uv_tcp_t *client_socket, int error_code) {
       free(response);
       free(write_req);
 
-      if (client)
+      if (client) {
         end_request(client);
+        client_unref(client);
+      }
     }
   }
 }
@@ -190,14 +221,9 @@ void reply(Res *res, int status, const void *body, size_t body_len) {
 
   res->replied = true;
 
-  if (!res->client_socket) {
+  if (!validate_client_for_response(res)) {
     if (res->arena)
       arena_reset(res->arena);
-    return;
-  }
-
-  if (uv_is_closing((uv_handle_t *)res->client_socket) || !uv_is_readable((uv_stream_t *)res->client_socket) || !uv_is_writable((uv_stream_t *)res->client_socket)) {
-    send_error(res->arena, res->client_socket, 500);
     return;
   }
 
@@ -296,10 +322,14 @@ void reply(Res *res, int status, const void *body, size_t body_len) {
   write_req->data = response;
   write_req->arena = res->arena;
   write_req->client = (client_t *)res->client_socket->data;
+  if (write_req->client)
+    client_ref(write_req->client);
   write_req->buf = uv_buf_init(response, (unsigned int)total_len);
 
   if (uv_is_closing((uv_handle_t *)res->client_socket)) {
     arena_reset(res->arena);
+    if (write_req->client)
+      client_unref(write_req->client);
     return;
   }
 
@@ -310,8 +340,10 @@ void reply(Res *res, int status, const void *body, size_t body_len) {
     LOG_DEBUG("Write error: %s", uv_strerror(result));
     arena_reset(res->arena);
 
-    if (write_req->client)
+    if (write_req->client) {
       end_request(write_req->client);
+      client_unref(write_req->client);
+    }
   }
 }
 
@@ -359,6 +391,12 @@ static bool is_valid_header_value(const char *value) {
 void set_header(Res *res, const char *name, const char *value) {
   if (!res || !res->arena || !name || !value) {
     LOG_ERROR("Invalid argument(s) to set_header");
+    return;
+  }
+
+  if (!validate_client_for_response(res)) {
+    if (res->arena)
+      arena_reset(res->arena);
     return;
   }
 
@@ -418,6 +456,13 @@ void set_header(Res *res, const char *name, const char *value) {
 void redirect(Res *res, int status, const char *url) {
   if (!res || !url)
     return;
+
+  if (!validate_client_for_response(res)) {
+    LOG_DEBUG("redirect(): Client validation failed");
+    if (res->arena)
+      arena_reset(res->arena);
+    return;
+  }
 
   if (!is_valid_header_value(url)) {
     LOG_ERROR("Invalid redirect URL (CRLF detected)");
