@@ -25,7 +25,7 @@ static atomic_uint_fast64_t next_client_id = ATOMIC_VAR_INIT(1);
 #endif
 
 #ifndef REQUEST_TIMEOUT_MS
-#define REQUEST_TIMEOUT_MS 30000
+#define REQUEST_TIMEOUT_MS 0 /* disabled by default, configure via CMake */
 #endif
 
 #ifndef CLEANUP_INTERVAL_MS
@@ -679,22 +679,29 @@ static void on_read(uv_stream_t *stream, ssize_t nread, const uv_buf_t *buf) {
     client_context_reset(client);
     client->request_in_progress = true;
 
-    if (!client->request_timeout_timer) {
-      client->request_timeout_timer = malloc(sizeof(uv_timer_t));
-      if (client->request_timeout_timer) {
-        uv_timer_init(ecewo_server.loop, client->request_timeout_timer);
-        client->request_timeout_timer->data = client;
-        client_ref(client);
+    #if REQUEST_TIMEOUT_MS > 0
+      if (!client->request_timeout_timer) {
+        client->request_timeout_timer = malloc(sizeof(uv_timer_t));
+        if (client->request_timeout_timer) {
+          if (uv_timer_init(ecewo_server.loop, client->request_timeout_timer) == 0) {
+            client->request_timeout_timer->data = client;
+            client_ref(client);
+            
+            if (uv_timer_start(client->request_timeout_timer,
+                              on_request_timeout,
+                              REQUEST_TIMEOUT_MS,
+                              0) != 0) {
+              client_unref(client);
+              uv_close((uv_handle_t *)client->request_timeout_timer, (uv_close_cb)free);
+              client->request_timeout_timer = NULL;
+            }
+          } else {
+            free(client->request_timeout_timer);
+            client->request_timeout_timer = NULL;
+          }
+        }
       }
-    }
-
-    if (client->request_timeout_timer) {
-      uv_timer_start(client->request_timeout_timer,
-                     on_request_timeout,
-                     REQUEST_TIMEOUT_MS,
-                     0 // Non-repeating
-      );
-    }
+    #endif
   }
 
   if (buf && buf->base) {
