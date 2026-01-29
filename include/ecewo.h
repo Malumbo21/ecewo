@@ -167,6 +167,12 @@ Timer *set_timeout(timer_callback_t callback, uint64_t delay_ms, void *user_data
 Timer *set_interval(timer_callback_t callback, uint64_t interval_ms, void *user_data);
 void clear_timer(Timer *timer);
 
+// Enable request timeout for the current request
+// Returns 0 on success, -1 on error
+// Call this in your route handler or middleware to set a timeout
+// Call it multiple times to reset or renew
+int request_timeout(Res *res, uint64_t timeout_ms);
+
 // REQUEST FUNCTIONS
 const char *get_param(const Req *req, const char *key);
 const char *get_query(const Req *req, const char *key);

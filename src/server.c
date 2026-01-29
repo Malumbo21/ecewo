@@ -645,6 +645,48 @@ static bool stop_request_timer(client_t *client) {
   return true;
 }
 
+int request_timeout(Res *res, uint64_t timeout_ms) {
+  if (!res || !res->client_socket || !res->client_socket->data)
+    return -1;
+  
+  client_t *client = (client_t *)res->client_socket->data;
+  
+  if (!client || client->closing)
+    return -1;
+  
+  if (client->request_timeout_timer) {
+    return uv_timer_start(client->request_timeout_timer,
+                         on_request_timeout,
+                         timeout_ms,
+                         0);
+  }
+  
+  client->request_timeout_timer = malloc(sizeof(uv_timer_t));
+  if (!client->request_timeout_timer)
+    return -1;
+  
+  if (uv_timer_init(ecewo_server.loop, client->request_timeout_timer) != 0) {
+    free(client->request_timeout_timer);
+    client->request_timeout_timer = NULL;
+    return -1;
+  }
+  
+  client->request_timeout_timer->data = client;
+  client_ref(client);
+  
+  if (uv_timer_start(client->request_timeout_timer,
+                     on_request_timeout,
+                     timeout_ms,
+                     0) != 0) {
+    client_unref(client);
+    uv_close((uv_handle_t *)client->request_timeout_timer, (uv_close_cb)free);
+    client->request_timeout_timer = NULL;
+    return -1;
+  }
+  
+  return 0;
+}
+
 static void on_read(uv_stream_t *stream, ssize_t nread, const uv_buf_t *buf) {
   client_t *client = (client_t *)stream->data;
 
