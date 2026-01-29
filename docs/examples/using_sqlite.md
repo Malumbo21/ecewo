@@ -133,7 +133,6 @@ void add_user(Req *req, Res *res);
 extern sqlite3 *db;
 
 typedef struct {
-    Res *res;
     char *name;
     char *username;
     char *password;
@@ -173,9 +172,9 @@ void add_user_work(void *context) {
 }
 
 // Callback function - runs on main thread
-void add_user_done(void *context) {
+void add_user_done(Res *res, void *context) {
     AddUserContext *ctx = (AddUserContext *)context;
-    send_text(ctx->res, ctx->status, ctx->message);
+    send_text(res, ctx->status, ctx->message);
 }
 
 // Handler function - runs on main thread
@@ -206,7 +205,6 @@ void add_user(Req *req, Res *res) {
 
     // Create context using arena
     AddUserContext *ctx = arena_alloc(res->arena, sizeof(AddUserContext));
-    ctx->res = res;
     ctx->name = arena_strdup(res->arena, name);
     ctx->username = arena_strdup(res->arena, username);
     ctx->password = arena_strdup(res->arena, password);
@@ -214,7 +212,7 @@ void add_user(Req *req, Res *res) {
     cJSON_Delete(json);
 
     // Spawn async work
-    spawn(ctx, add_user_work, add_user_done);
+    spawn_http(res, ctx, add_user_work, add_user_done);
 }
 ```
 
@@ -247,7 +245,6 @@ extern sqlite3 *db;
 
 // Context for get_all_users
 typedef struct {
-    Res *res;
     cJSON *json_array;
     int status;
     char *error_message;
@@ -296,16 +293,16 @@ void get_users_work(void *context) {
 }
 
 // Callback - runs on main thread
-void get_users_done(void *context) {
+void get_users_done(Res *res, void *context) {
     GetUsersContext *ctx = (GetUsersContext *)context;
 
     if (ctx->status != 200 || !ctx->json_array) {
-        send_text(ctx->res, ctx->status, ctx->error_message);
+        send_text(res, ctx->status, ctx->error_message);
         return;
     }
 
     char *json_string = cJSON_PrintUnformatted(ctx->json_array);
-    send_json(ctx->res, 200, json_string);
+    send_json(res, 200, json_string);
 
     cJSON_Delete(ctx->json_array);
     free(json_string);
@@ -314,12 +311,11 @@ void get_users_done(void *context) {
 // Handler - runs on main thread
 void get_all_users(Req *req, Res *res) {
     GetUsersContext *ctx = arena_alloc(res->arena, sizeof(GetUsersContext));
-    ctx->res = res;
     ctx->json_array = NULL;
     ctx->status = 500;
     ctx->error_message = "Unknown error";
 
-    spawn(ctx, get_users_work, get_users_done);
+    spawn_http(res, ctx, get_users_work, get_users_done);
 }
 
 // ... add_user functions from previous section ...
