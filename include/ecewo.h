@@ -219,7 +219,16 @@ void *get_context(Req *req, const char *key);
 
 // TASK SPAWN
 typedef void (*spawn_handler_t)(void *context);
+typedef void (*spawn_done_t)(Res *res, void *context);
+
+// For general async work (no request/response)
 int spawn(void *context, spawn_handler_t work_fn, spawn_handler_t done_fn);
+
+// For async request handling
+int spawn_http(Res *res,
+               void *context, 
+               spawn_handler_t work_fn, 
+               spawn_done_t done_fn);
 
 // ROUTE REGISTRATION
 typedef enum {
