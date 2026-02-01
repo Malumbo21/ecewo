@@ -1028,3 +1028,18 @@ void clear_timer(Timer *timer) {
 
   uv_close((uv_handle_t *)timer, (uv_close_cb)free);
 }
+
+bool client_is_valid(void *client_socket_data) {
+  if (!client_socket_data)
+    return false;
+  
+  client_t *client = (client_t *)client_socket_data;
+  
+  if (!client->valid || client->closing)
+    return false;
+  
+  if (uv_is_closing((uv_handle_t *)&client->handle))
+    return false;
+  
+  return true;
+}

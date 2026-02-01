@@ -281,6 +281,7 @@ void register_options(const char *path, int mw_count, ...);
   register_options(path, MW(__VA_ARGS__), __VA_ARGS__)
 
 // DEVELOPMENT FUNCTIONS FOR PLUGINS
+bool client_is_valid(void *client_socket_data);
 void client_ref(client_t *client);
 void client_unref(client_t *client);
 void increment_async_work(void);
