@@ -1,7 +1,6 @@
 #include <stdlib.h>
 #include <signal.h>
 #include <inttypes.h>
-#include <stdatomic.h>
 #include "server.h"
 #include "route-trie.h"
 #include "middleware.h"
@@ -58,8 +57,7 @@ typedef struct timer_data_s {
   bool is_interval;
 } timer_data_t;
 
-static struct
-{
+static struct {
   bool initialized;
   bool running;
   bool shutdown_requested;

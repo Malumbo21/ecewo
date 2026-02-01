@@ -37,9 +37,5 @@ struct client_s {
   bool valid;
 };
 
-typedef struct client_s client_t;
-
-void client_unref(client_t *client);
-void client_ref(client_t *client);
 
 #endif

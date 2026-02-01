@@ -16,6 +16,7 @@ typedef struct uv_tcp_s uv_tcp_t;
 typedef uv_timer_t Timer;
 
 typedef struct ArenaRegion ArenaRegion;
+typedef struct client_s client_t;
 
 typedef struct Arena {
   ArenaRegion *begin, *end;
@@ -280,6 +281,8 @@ void register_options(const char *path, int mw_count, ...);
   register_options(path, MW(__VA_ARGS__), __VA_ARGS__)
 
 // DEVELOPMENT FUNCTIONS FOR PLUGINS
+void client_ref(client_t *client);
+void client_unref(client_t *client);
 void increment_async_work(void);
 void decrement_async_work(void);
 uv_loop_t *get_loop(void);
