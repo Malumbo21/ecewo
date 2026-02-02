@@ -748,7 +748,7 @@ static void on_read(uv_stream_t *stream, ssize_t nread, const uv_buf_t *buf) {
     int result = router(client, buf->base, (size_t)nread);
 
     switch (result) {
-    case REQUEST_KEEP_ALIVE:
+    case REQUEST_KEEP_ALIVE: {
       // The timer is stopped for async responses by write_completion_cb in response.c
       bool had_timer = stop_request_timer(client);
       client->keep_alive_enabled = true;
@@ -756,6 +756,7 @@ static void on_read(uv_stream_t *stream, ssize_t nread, const uv_buf_t *buf) {
       if (had_timer)
         client_unref(client);
       break;
+    }
 
     case REQUEST_CLOSE:
       close_client(client);
