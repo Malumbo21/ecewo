@@ -59,8 +59,9 @@ static void write_completion_cb(uv_write_t *req, int status) {
       write_req->data = NULL;
     }
     memset(write_req, 0, sizeof(write_req_t));
-    free(write_req);
   }
+
+  free(write_req);
 }
 
 static bool validate_client_for_response(Res *res) {
@@ -129,7 +130,7 @@ void send_error(Arena *arena, uv_tcp_t *client_socket, int error_code) {
 
     size_t response_len = strlen(response);
 
-    write_req_t *write_req = arena_alloc(arena, sizeof(write_req_t));
+    write_req_t *write_req = malloc(sizeof(write_req_t));
     if (!write_req) {
       arena_reset(arena);
       return;
@@ -153,6 +154,8 @@ void send_error(Arena *arena, uv_tcp_t *client_socket, int error_code) {
         end_request(write_req->client);
         client_unref(write_req->client);
       }
+      
+      free(write_req);
     }
   } else {
     // Malloc path
@@ -312,7 +315,7 @@ void reply(Res *res, int status, const void *body, size_t body_len) {
   if (body_len > 0 && body)
     memcpy(response + headers_len, body, body_len);
 
-  write_req_t *write_req = arena_alloc(res->arena, sizeof(write_req_t));
+  write_req_t *write_req = malloc(sizeof(write_req_t));
   if (!write_req) {
     send_error(res->arena, res->client_socket, 500);
     return;
@@ -344,6 +347,8 @@ void reply(Res *res, int status, const void *body, size_t body_len) {
       end_request(write_req->client);
       client_unref(write_req->client);
     }
+
+    free(write_req);
   }
 }
 
