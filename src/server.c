@@ -326,25 +326,19 @@ static void close_walk_cb(uv_handle_t *handle, void *arg) {
     return;
 
   if (handle->type == UV_TCP) {
-    if (handle != (uv_handle_t *)ecewo_server.server) {
-      client_t *client = (client_t *)handle->data;
-      if (client)
-        close_client(client);
-    }
-    // } else if (handle->type == UV_TIMER) {
-    //   if (handle != (uv_handle_t *)ecewo_server.cleanup_timer) {
-    //     uv_timer_stop((uv_timer_t *)handle);
-    //     timer_data_t *data = (timer_data_t *)handle->data;
-    //     if (data)
-    //       free(data);
-    //     uv_close(handle, (uv_close_cb)free);
-    //   }
+  } else if (handle->type == UV_TIMER) {
+    uv_timer_stop((uv_timer_t *)handle);
   } else if (handle->type == UV_SIGNAL) {
     uv_signal_stop((uv_signal_t *)handle);
-    uv_close(handle, NULL);
-  } else {
-    uv_close(handle, NULL);
   }
+
+  if (handle->type == UV_TIMER && handle->data) {
+    timer_data_t *data = (timer_data_t *)handle->data;
+    free(data);
+    handle->data = NULL;
+  }
+
+  uv_close(handle, NULL);
 }
 
 static void on_server_closed(uv_handle_t *handle) {
@@ -371,6 +365,7 @@ void server_shutdown(void) {
   const char *is_worker = getenv("ECEWO_WORKER");
   bool in_cluster = (is_worker && strcmp(is_worker, "1") == 0);
 
+  // Close signal handlers
   if (!in_cluster) {
     if (!uv_is_closing((uv_handle_t *)&ecewo_server.sigint_handle)) {
       uv_signal_stop(&ecewo_server.sigint_handle);
@@ -383,19 +378,14 @@ void server_shutdown(void) {
     }
   }
 
+  // Stop accepting new connections
   if (ecewo_server.server && !uv_is_closing((uv_handle_t *)ecewo_server.server))
     uv_close((uv_handle_t *)ecewo_server.server, on_server_closed);
 
-  client_t *current = ecewo_server.client_list_head;
-  while (current) {
-    client_t *next = current->next;
-    close_client(current);
-    current = next;
-  }
-
-  // STEP 1: Wait for external async work (Postgres, Redis, etc.)
+  // APPLICATION-LEVEL GRACEFUL SHUTDOWN
   uint64_t start = uv_now(ecewo_server.loop);
 
+  // Wait for external async work
   while (get_pending_async_work() > 0) {
     if ((uv_now(ecewo_server.loop) - start) >= SHUTDOWN_TIMEOUT_MS) {
       LOG_DEBUG("External async timeout: %d operations abandoned",
@@ -405,43 +395,50 @@ void server_shutdown(void) {
     uv_run(ecewo_server.loop, UV_RUN_ONCE);
   }
 
-  // STEP 2: Close all remaining handles
-  uv_walk(ecewo_server.loop, close_walk_cb, NULL);
-
-  // STEP 3: Wait for libuv cleanup (timers, work queue, etc.)
   start = uv_now(ecewo_server.loop);
-
-  while (uv_loop_alive(ecewo_server.loop)) {
+  
+  while (ecewo_server.active_connections > 0) {
     if ((uv_now(ecewo_server.loop) - start) >= SHUTDOWN_TIMEOUT_MS) {
-      LOG_DEBUG("libuv cleanup timeout, forcing close");
+      LOG_DEBUG("Graceful shutdown timeout: %d connections forced closed",
+                ecewo_server.active_connections);
       break;
     }
+    
+    client_t *current = ecewo_server.client_list_head;
+    bool has_active = false;
+    
+    while (current) {
+      client_t *next = current->next;
+      
+      if (!current->request_in_progress && !current->closing) {
+        close_client(current);
+      } else {
+        has_active = true;
+      }
+      
+      current = next;
+    }
+    
+    if (!has_active)
+      break;
+      
     uv_run(ecewo_server.loop, UV_RUN_ONCE);
   }
 
-  // STEP 4: Cleanup taken-over connections
-  // Some clients may have been taken over by plugins (e.g., WebSocket)
-  // Their handles are already closed, but client structs are still in the list
-  current = ecewo_server.client_list_head;
+  // Force close all remaining connections
+  client_t *current = ecewo_server.client_list_head;
   while (current) {
     client_t *next = current->next;
-
-    if (uv_is_closing((uv_handle_t *)&current->handle) && !current->closing) {
-      remove_client_from_list(current);
-      ecewo_server.active_connections--;
-
-      if (current->connection_arena)
-        arena_return(current->connection_arena);
-
-      free(current);
-    }
-
+    close_client(current);
     current = next;
   }
 
-  if (ecewo_server.active_connections > 0)
-    LOG_DEBUG("Warning: %d connections not properly closed",
-              ecewo_server.active_connections);
+  // LIBUV LOOP CLEANUP
+  uv_stop(ecewo_server.loop);
+  uv_walk(ecewo_server.loop, close_walk_cb, NULL);
+  uv_run(ecewo_server.loop, UV_RUN_DEFAULT);
+  
+  // uv_loop_close() is called in server_cleanup()
 }
 
 static void router_cleanup(void) {
@@ -511,22 +508,18 @@ static void server_cleanup(void) {
   arena_pool_destroy();
   destroy_date_cache();
 
-  uint64_t start = uv_now(ecewo_server.loop);
-
-  while (uv_loop_alive(ecewo_server.loop)) {
-    if ((uv_now(ecewo_server.loop) - start) >= CLEANUP_TIMEOUT_MS) {
-      LOG_DEBUG("Cleanup timeout: forcing loop close");
-      break;
-    }
-
-    uv_run(ecewo_server.loop, UV_RUN_NOWAIT);
-  }
-
+  // server_shutdown() already ran the loop, just need to close it here
   int result = uv_loop_close(ecewo_server.loop);
   if (result != 0) {
+    LOG_ERROR("uv_loop_close failed: %s", uv_strerror(result));
+    
+    uv_stop(ecewo_server.loop);
     uv_walk(ecewo_server.loop, close_walk_cb, NULL);
-    uv_run(ecewo_server.loop, UV_RUN_NOWAIT);
-    uv_loop_close(ecewo_server.loop);
+    uv_run(ecewo_server.loop, UV_RUN_DEFAULT);
+    
+    result = uv_loop_close(ecewo_server.loop);
+    if (result != 0)
+      LOG_ERROR("Final uv_loop_close failed: %s", uv_strerror(result));
   }
 
   if (ecewo_server.server && !ecewo_server.server_closed)
