@@ -142,23 +142,23 @@ static void on_client_closed(uv_handle_t *handle) {
 static void close_client(client_t *client) {
   if (!client || client->closing)
     return;
-  
+
   bool need_unref = (client->request_timeout_timer != NULL);
-  
+
   if (client->request_timeout_timer) {
     uv_timer_stop(client->request_timeout_timer);
     uv_close((uv_handle_t *)client->request_timeout_timer, (uv_close_cb)free);
     client->request_timeout_timer = NULL;
   }
-  
+
   client->closing = true;
   client->valid = false;
-  
+
   uv_read_stop((uv_stream_t *)&client->handle);
-  
+
   if (!uv_is_closing((uv_handle_t *)&client->handle))
     uv_close((uv_handle_t *)&client->handle, on_client_closed);
-  
+
   if (need_unref)
     client_unref(client);
 }
@@ -396,32 +396,32 @@ void server_shutdown(void) {
   }
 
   start = uv_now(ecewo_server.loop);
-  
+
   while (ecewo_server.active_connections > 0) {
     if ((uv_now(ecewo_server.loop) - start) >= SHUTDOWN_TIMEOUT_MS) {
       LOG_DEBUG("Graceful shutdown timeout: %d connections forced closed",
                 ecewo_server.active_connections);
       break;
     }
-    
+
     client_t *current = ecewo_server.client_list_head;
     bool has_active = false;
-    
+
     while (current) {
       client_t *next = current->next;
-      
+
       if (!current->request_in_progress && !current->closing) {
         close_client(current);
       } else {
         has_active = true;
       }
-      
+
       current = next;
     }
-    
+
     if (!has_active)
       break;
-      
+
     uv_run(ecewo_server.loop, UV_RUN_ONCE);
   }
 
@@ -437,7 +437,7 @@ void server_shutdown(void) {
   uv_stop(ecewo_server.loop);
   uv_walk(ecewo_server.loop, close_walk_cb, NULL);
   uv_run(ecewo_server.loop, UV_RUN_DEFAULT);
-  
+
   // uv_loop_close() is called in server_cleanup()
 }
 
@@ -512,11 +512,11 @@ static void server_cleanup(void) {
   int result = uv_loop_close(ecewo_server.loop);
   if (result != 0) {
     LOG_ERROR("uv_loop_close failed: %s", uv_strerror(result));
-    
+
     uv_stop(ecewo_server.loop);
     uv_walk(ecewo_server.loop, close_walk_cb, NULL);
     uv_run(ecewo_server.loop, UV_RUN_DEFAULT);
-    
+
     result = uv_loop_close(ecewo_server.loop);
     if (result != 0)
       LOG_ERROR("Final uv_loop_close failed: %s", uv_strerror(result));
@@ -615,12 +615,12 @@ static void on_request_timeout(uv_timer_t *handle) {
   if (client) {
     if (client->connection_arena)
       arena_reset(client->connection_arena);
-    
+
     client->request_timeout_timer = NULL;
     close_client(client);
     client_unref(client);
   }
-  
+
   uv_timer_stop(handle);
   uv_close((uv_handle_t *)handle, (uv_close_cb)free);
 }
@@ -628,54 +628,55 @@ static void on_request_timeout(uv_timer_t *handle) {
 static bool stop_request_timer(client_t *client) {
   if (!client || !client->request_timeout_timer)
     return false;
-  
+
   uv_timer_stop(client->request_timeout_timer);
   uv_close((uv_handle_t *)client->request_timeout_timer, (uv_close_cb)free);
   client->request_timeout_timer = NULL;
-  
+
   return true;
 }
 
 int request_timeout(Res *res, uint64_t timeout_ms) {
   if (!res || !res->client_socket || !res->client_socket->data)
     return -1;
-  
+
   client_t *client = (client_t *)res->client_socket->data;
-  
+
   if (!client || client->closing)
     return -1;
-  
+
   if (client->request_timeout_timer) {
     return uv_timer_start(client->request_timeout_timer,
-                         on_request_timeout,
-                         timeout_ms,
-                         0);
+                          on_request_timeout,
+                          timeout_ms,
+                          0);
   }
-  
+
   client->request_timeout_timer = malloc(sizeof(uv_timer_t));
   if (!client->request_timeout_timer)
     return -1;
-  
+
   if (uv_timer_init(ecewo_server.loop, client->request_timeout_timer) != 0) {
     free(client->request_timeout_timer);
     client->request_timeout_timer = NULL;
     return -1;
   }
-  
+
   client->request_timeout_timer->data = client;
   client_ref(client);
-  
+
   if (uv_timer_start(client->request_timeout_timer,
                      on_request_timeout,
                      timeout_ms,
-                     0) != 0) {
+                     0)
+      != 0) {
     uv_timer_t *timer = client->request_timeout_timer;
     client->request_timeout_timer = NULL;
     client_unref(client);
     uv_close((uv_handle_t *)timer, (uv_close_cb)free);
     return -1;
   }
-  
+
   return 0;
 }
 
@@ -713,29 +714,30 @@ static void on_read(uv_stream_t *stream, ssize_t nread, const uv_buf_t *buf) {
     client_context_reset(client);
     client->request_in_progress = true;
 
-    #if REQUEST_TIMEOUT_MS > 0
-      if (!client->request_timeout_timer) {
-        client->request_timeout_timer = malloc(sizeof(uv_timer_t));
-        if (client->request_timeout_timer) {
-          if (uv_timer_init(ecewo_server.loop, client->request_timeout_timer) == 0) {
-            client->request_timeout_timer->data = client;
-            client_ref(client);
-            
-            if (uv_timer_start(client->request_timeout_timer,
-                              on_request_timeout,
-                              REQUEST_TIMEOUT_MS,
-                              0) != 0) {
-              client_unref(client);
-              uv_close((uv_handle_t *)client->request_timeout_timer, (uv_close_cb)free);
-              client->request_timeout_timer = NULL;
-            }
-          } else {
-            free(client->request_timeout_timer);
+#if REQUEST_TIMEOUT_MS > 0
+    if (!client->request_timeout_timer) {
+      client->request_timeout_timer = malloc(sizeof(uv_timer_t));
+      if (client->request_timeout_timer) {
+        if (uv_timer_init(ecewo_server.loop, client->request_timeout_timer) == 0) {
+          client->request_timeout_timer->data = client;
+          client_ref(client);
+
+          if (uv_timer_start(client->request_timeout_timer,
+                             on_request_timeout,
+                             REQUEST_TIMEOUT_MS,
+                             0)
+              != 0) {
+            client_unref(client);
+            uv_close((uv_handle_t *)client->request_timeout_timer, (uv_close_cb)free);
             client->request_timeout_timer = NULL;
           }
+        } else {
+          free(client->request_timeout_timer);
+          client->request_timeout_timer = NULL;
         }
       }
-    #endif
+    }
+#endif
   }
 
   if (buf && buf->base) {
@@ -1026,14 +1028,14 @@ void clear_timer(Timer *timer) {
 bool client_is_valid(void *client_socket_data) {
   if (!client_socket_data)
     return false;
-  
+
   client_t *client = (client_t *)client_socket_data;
-  
+
   if (!client->valid || client->closing)
     return false;
-  
+
   if (uv_is_closing((uv_handle_t *)&client->handle))
     return false;
-  
+
   return true;
 }

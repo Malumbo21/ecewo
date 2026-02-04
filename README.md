@@ -65,8 +65,8 @@ include(FetchContent)
 
 FetchContent_Declare(
   ecewo
-  GIT_REPOSITORY https://github.com/savashn/ecewo.git
-  GIT_TAG v3.1.1
+  GIT_REPOSITORY https://github.com/ecewo/ecewo.git
+  GIT_TAG v3.2.0
 )
 
 FetchContent_MakeAvailable(ecewo)
@@ -92,7 +92,7 @@ cmake --build .
 
 ## Benchmarks
 
-Here are "Hello World" benchmark results comparing several frameworks with ecewo. See the source code of the [benchmark test](https://github.com/ecewo/benchmarks).
+Here are basic "Hello World" benchmark results comparing several frameworks with ecewo. See the source code of the [benchmark test](https://github.com/ecewo/benchmarks).
 
 - **Machine:** 12th Gen Intel Core i7-12700F x 20, 32GB RAM, SSD
 - **OS:** Fedora Workstation 43

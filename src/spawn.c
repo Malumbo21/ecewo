@@ -72,10 +72,10 @@ int spawn(void *context, spawn_handler_t work_fn, spawn_handler_t done_fn) {
   increment_async_work();
 
   int result = uv_queue_work(
-    get_loop(),
-    &task->work,
-    spawn_work_cb,
-    spawn_after_work_cb);
+      get_loop(),
+      &task->work,
+      spawn_work_cb,
+      spawn_after_work_cb);
 
   if (result != 0) {
     decrement_async_work();
@@ -151,53 +151,51 @@ static void spawn_http_after_work_cb(uv_work_t *req, int status) {
   spawn_http_t *t = (spawn_http_t *)req->data;
   if (!t)
     return;
-  
+
   if (status < 0)
     LOG_ERROR("Async spawn execution failed");
-  
+
   uv_async_send(&t->async_send);
 }
 
-int spawn_http(Res *res, void *context, 
-               spawn_handler_t work_fn, 
-               spawn_done_t done_fn) {
-  
+int spawn_http(Res *res, void *context, spawn_handler_t work_fn, spawn_done_t done_fn) {
+
   if (!res || !work_fn)
     return -1;
-  
+
   if (!res->client_socket || !res->client_socket->data)
     return -1;
-  
+
   spawn_http_t *task = calloc(1, sizeof(spawn_http_t));
   if (!task)
     return -1;
-  
+
   if (uv_async_init(get_loop(), &task->async_send, spawn_http_async_cb) != 0) {
     free(task);
     return -1;
   }
-  
+
   task->work.data = task;
   task->async_send.data = task;
   task->context = context;
   task->work_fn = work_fn;
   task->done_fn = done_fn;
-  
+
   task->res = res;
   task->client = NULL;
   if (res && res->client_socket && res->client_socket->data) {
     task->client = (client_t *)res->client_socket->data;
     client_ref(task->client);
   }
-  
+
   increment_async_work();
-  
+
   int result = uv_queue_work(
-    get_loop(),
-    &task->work,
-    spawn_http_work_cb,
-    spawn_http_after_work_cb);
-  
+      get_loop(),
+      &task->work,
+      spawn_http_work_cb,
+      spawn_http_after_work_cb);
+
   if (result != 0) {
     decrement_async_work();
     uv_close((uv_handle_t *)&task->async_send, NULL);
@@ -206,6 +204,6 @@ int spawn_http(Res *res, void *context,
     free(task);
     return result;
   }
-  
+
   return 0;
 }

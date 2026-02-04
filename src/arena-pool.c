@@ -157,7 +157,7 @@ static inline uint16_t get_arena_preallocation() {
     return preallocate;
   }
 
-  uint16_t env_val = (uint16_t) val;
+  uint16_t env_val = (uint16_t)val;
 
   if (env_val > ARENA_POOL_CAP) {
     LOG_DEBUG("ECEWO_ARENA_PREALLOC=%d exceeds maximum %d, capping to %d",

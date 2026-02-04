@@ -46,7 +46,7 @@ int tokenize_path(Arena *arena, const char *path, size_t path_len, tokenized_pat
     while (p < end && *p != '/') // catches segment value
       p++;
 
-    size_t len = (size_t) (p - start);
+    size_t len = (size_t)(p - start);
     if (len == 0)
       continue;
 

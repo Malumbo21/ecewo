@@ -37,5 +37,4 @@ struct client_s {
   bool valid;
 };
 
-
 #endif

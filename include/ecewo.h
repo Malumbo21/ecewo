@@ -233,8 +233,8 @@ int spawn(void *context, spawn_handler_t work_fn, spawn_handler_t done_fn);
 
 // For async request handling
 int spawn_http(Res *res,
-               void *context, 
-               spawn_handler_t work_fn, 
+               void *context,
+               spawn_handler_t work_fn,
                spawn_done_t done_fn);
 
 // ROUTE REGISTRATION
