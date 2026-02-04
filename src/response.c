@@ -70,15 +70,15 @@ static bool validate_client_for_response(Res *res) {
 
   if (uv_is_closing((uv_handle_t *)res->client_socket))
     return false;
-  
+
   client_t *client = (client_t *)res->client_socket->data;
-  
+
   if (!client->valid || client->closing)
     return false;
-  
+
   if (!uv_is_writable((uv_stream_t *)res->client_socket))
     return false;
-  
+
   return true;
 }
 
@@ -154,7 +154,7 @@ void send_error(Arena *arena, uv_tcp_t *client_socket, int error_code) {
         end_request(write_req->client);
         client_unref(write_req->client);
       }
-      
+
       free(write_req);
     }
   } else {
@@ -315,6 +315,14 @@ void reply(Res *res, int status, const void *body, size_t body_len) {
   if (body_len > 0 && body)
     memcpy(response + headers_len, body, body_len);
 
+  // uv_write() is an async operation
+  // so when reply() returns, client can send
+  // another request and reset the arena,
+  // but uv_write() might not be completed yet.
+  // Therefore write_req must be
+  // allocated via malloc, not arena_alloc!
+  // Otherwise, it may cause segfault
+  // under a high load.
   write_req_t *write_req = malloc(sizeof(write_req_t));
   if (!write_req) {
     send_error(res->arena, res->client_socket, 500);
@@ -333,6 +341,7 @@ void reply(Res *res, int status, const void *body, size_t body_len) {
     arena_reset(res->arena);
     if (write_req->client)
       client_unref(write_req->client);
+    free(write_req);
     return;
   }
 

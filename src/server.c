@@ -669,9 +669,10 @@ int request_timeout(Res *res, uint64_t timeout_ms) {
                      on_request_timeout,
                      timeout_ms,
                      0) != 0) {
-    client_unref(client);
-    uv_close((uv_handle_t *)client->request_timeout_timer, (uv_close_cb)free);
+    uv_timer_t *timer = client->request_timeout_timer;
     client->request_timeout_timer = NULL;
+    client_unref(client);
+    uv_close((uv_handle_t *)timer, (uv_close_cb)free);
     return -1;
   }
   
