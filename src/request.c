@@ -48,8 +48,15 @@ const char *get_header(const Req *req, const char *key) {
 }
 
 void set_context(Req *req, const char *key, void *data) {
-  if (!req || !req->ctx || !key)
+  if (!req || !key)
     return;
+
+  if (!req->ctx) {
+    req->ctx = arena_alloc(req->arena, sizeof(context_t));
+    if (!req->ctx)
+      return;
+    memset(req->ctx, 0, sizeof(context_t));
+  }
 
   context_t *ctx = req->ctx;
 
@@ -64,10 +71,10 @@ void set_context(Req *req, const char *key, void *data) {
     uint32_t new_capacity = ctx->capacity == 0 ? 8 : ctx->capacity * 2;
 
     context_entry_t *new_entries = arena_realloc(
-        req->arena,
-        ctx->entries,
-        ctx->capacity * sizeof(context_entry_t),
-        new_capacity * sizeof(context_entry_t));
+      req->arena,
+      ctx->entries,
+      ctx->capacity * sizeof(context_entry_t),
+      new_capacity * sizeof(context_entry_t));
 
     if (!new_entries)
       return;
