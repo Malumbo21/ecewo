@@ -309,10 +309,7 @@ static void client_context_reset(client_t *client) {
   if (!client || !client->connection_arena)
     return;
 
-  arena_reset(client->connection_arena);
-
   llhttp_reset(&client->persistent_parser);
-
   http_context_init(&client->persistent_context,
                     client->connection_arena,
                     &client->persistent_parser,
