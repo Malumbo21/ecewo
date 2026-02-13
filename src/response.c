@@ -14,12 +14,10 @@
 #endif
 #endif
 
-typedef struct
-{
+typedef struct {
   uv_write_t req;
   uv_buf_t buf;
   char *data;
-  Arena *arena;
   client_t *client;
 } write_req_t;
 
@@ -33,7 +31,7 @@ static void end_request(client_t *client) {
     uv_timer_stop(client->request_timeout_timer);
     uv_close((uv_handle_t *)client->request_timeout_timer, (uv_close_cb)free);
     client->request_timeout_timer = NULL;
-    client_unref(client); // This is timer's ref, not write_req's
+    client_unref(client);
   }
 }
 
@@ -50,15 +48,9 @@ static void write_completion_cb(uv_write_t *req, int status) {
     client_unref(write_req->client);
   }
 
-  if (write_req->arena) {
-    arena_reset(write_req->arena);
-  } else {
-    // Malloc fallback
-    if (write_req->data) {
-      free(write_req->data);
-      write_req->data = NULL;
-    }
-    memset(write_req, 0, sizeof(write_req_t));
+  if (write_req->data) {
+    free(write_req->data);
+    write_req->data = NULL;
   }
 
   free(write_req);
@@ -103,119 +95,71 @@ void send_error(Arena *arena, uv_tcp_t *client_socket, int error_code) {
   }
 
   const char *date_str = get_cached_date();
-
   const char *status_text = (error_code == 500) ? "Internal Server Error" : "Bad Request";
   const char *body = status_text;
   size_t body_len = strlen(body);
 
-  if (arena) {
-    char *response = arena_sprintf(arena,
-                                   "HTTP/1.1 %d %s\r\n"
-                                   "Date: %s\r\n"
-                                   "Content-Type: text/plain\r\n"
-                                   "Content-Length: %zu\r\n"
-                                   "Connection: close\r\n"
-                                   "\r\n"
-                                   "%s",
-                                   error_code,
-                                   status_text,
-                                   date_str,
-                                   body_len,
-                                   body);
+  size_t response_size = 512;
+  char *response = malloc(response_size);
 
-    if (!response) {
+  if (!response) {
+    if (arena)
       arena_reset(arena);
-      return;
-    }
+    return;
+  }
 
-    size_t response_len = strlen(response);
+  int written = snprintf(response, response_size,
+                         "HTTP/1.1 %d %s\r\n"
+                         "Date: %s\r\n"
+                         "Content-Type: text/plain\r\n"
+                         "Content-Length: %zu\r\n"
+                         "Connection: close\r\n"
+                         "\r\n"
+                         "%s",
+                         error_code,
+                         status_text,
+                         date_str,
+                         body_len,
+                         body);
 
-    write_req_t *write_req = malloc(sizeof(write_req_t));
-    if (!write_req) {
+  if (written < 0 || (size_t)written >= response_size) {
+    free(response);
+    if (arena)
       arena_reset(arena);
-      return;
-    }
+    return;
+  }
 
-    memset(&write_req->req, 0, sizeof(uv_write_t));
-    write_req->data = response;
-    write_req->arena = arena;
-    write_req->client = (client_t *)client_socket->data;
-    if (write_req->client)
-      client_ref(write_req->client);
-    write_req->buf = uv_buf_init(response, (unsigned int)response_len);
-
-    int res = uv_write(&write_req->req, (uv_stream_t *)client_socket,
-                       &write_req->buf, 1, write_completion_cb);
-    if (res < 0) {
-      LOG_ERROR("Write error: %s", uv_strerror(res));
+  write_req_t *write_req = malloc(sizeof(write_req_t));
+  if (!write_req) {
+    free(response);
+    if (arena)
       arena_reset(arena);
+    return;
+  }
 
-      if (write_req->client) {
-        end_request(write_req->client);
-        client_unref(write_req->client);
-      }
+  memset(write_req, 0, sizeof(write_req_t));
+  write_req->data = response;
+  write_req->client = (client_t *)client_socket->data;
+  if (write_req->client)
+    client_ref(write_req->client);
+  write_req->buf = uv_buf_init(response, (unsigned int)written);
 
-      free(write_req);
-    }
-  } else {
-    // Malloc path
-    // This is necessary for early errors
-    // that don't have arena yet
-    // and called send_error
-    size_t response_size = 512;
-    char *response = malloc(response_size);
+  int res = uv_write(&write_req->req, (uv_stream_t *)client_socket,
+                     &write_req->buf, 1, write_completion_cb);
 
-    if (!response)
-      return;
+  if (res < 0) {
+    LOG_ERROR("Write error: %s", uv_strerror(res));
+    free(response);
+    free(write_req);
 
-    int written = snprintf(response, response_size,
-                           "HTTP/1.1 %d %s\r\n"
-                           "Date: %s\r\n"
-                           "Content-Type: text/plain\r\n"
-                           "Content-Length: %zu\r\n"
-                           "Connection: close\r\n"
-                           "\r\n"
-                           "%s",
-                           error_code,
-                           status_text,
-                           date_str,
-                           body_len,
-                           body);
-
-    if (written < 0 || (size_t)written >= response_size) {
-      free(response);
-      return;
-    }
-
-    write_req_t *write_req = malloc(sizeof(write_req_t));
-    if (!write_req) {
-      free(response);
-      return;
-    }
-
-    memset(&write_req->req, 0, sizeof(uv_write_t));
-    write_req->data = response;
-    write_req->arena = NULL;
-    write_req->client = (client_t *)client_socket->data;
-    if (write_req->client)
-      client_ref(write_req->client);
-    write_req->buf = uv_buf_init(response, (unsigned int)written);
-
-    int res = uv_write(&write_req->req, (uv_stream_t *)client_socket,
-                       &write_req->buf, 1, write_completion_cb);
-    if (res < 0) {
-      LOG_ERROR("Write error: %s", uv_strerror(res));
-      client_t *client = write_req->client;
-
-      free(response);
-      free(write_req);
-
-      if (client) {
-        end_request(client);
-        client_unref(client);
-      }
+    if (write_req->client) {
+      end_request(write_req->client);
+      client_unref(write_req->client);
     }
   }
+
+  if (arena)
+    arena_reset(arena);
 }
 
 void reply(Res *res, int status, const void *body, size_t body_len) {
@@ -283,7 +227,6 @@ void reply(Res *res, int status, const void *body, size_t body_len) {
     }
   }
 
-  // Build HTTP response
   char *headers = arena_sprintf(res->arena,
                                 "HTTP/1.1 %d\r\n"
                                 "Date: %s\r\n"
@@ -305,7 +248,7 @@ void reply(Res *res, int status, const void *body, size_t body_len) {
   size_t headers_len = strlen(headers);
   size_t total_len = headers_len + body_len;
 
-  char *response = arena_alloc(res->arena, total_len);
+  char *response = malloc(total_len);
   if (!response) {
     send_error(res->arena, res->client_socket, 500);
     return;
@@ -325,20 +268,19 @@ void reply(Res *res, int status, const void *body, size_t body_len) {
   // under a high load.
   write_req_t *write_req = malloc(sizeof(write_req_t));
   if (!write_req) {
+    free(response);
     send_error(res->arena, res->client_socket, 500);
     return;
   }
 
-  memset(write_req, 0, sizeof(write_req_t));
   write_req->data = response;
-  write_req->arena = res->arena;
   write_req->client = (client_t *)res->client_socket->data;
   if (write_req->client)
     client_ref(write_req->client);
   write_req->buf = uv_buf_init(response, (unsigned int)total_len);
 
   if (uv_is_closing((uv_handle_t *)res->client_socket)) {
-    arena_reset(res->arena);
+    free(response);
     if (write_req->client)
       client_unref(write_req->client);
     free(write_req);
@@ -350,7 +292,7 @@ void reply(Res *res, int status, const void *body, size_t body_len) {
 
   if (result < 0) {
     LOG_DEBUG("Write error: %s", uv_strerror(result));
-    arena_reset(res->arena);
+    free(response);
 
     if (write_req->client) {
       end_request(write_req->client);
@@ -359,6 +301,9 @@ void reply(Res *res, int status, const void *body, size_t body_len) {
 
     free(write_req);
   }
+
+  if (res->arena)
+    arena_reset(res->arena);
 }
 
 static bool is_valid_header_char(char c) {
@@ -450,7 +395,8 @@ void set_header(Res *res, const char *name, const char *value) {
       return;
     }
 
-    memset(&tmp[res->header_capacity], 0, (new_cap - res->header_capacity) * sizeof(http_header_t));
+    memset(&tmp[res->header_capacity], 0,
+           (new_cap - res->header_capacity) * sizeof(http_header_t));
 
     res->headers = tmp;
     res->header_capacity = new_cap;
