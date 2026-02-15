@@ -159,16 +159,110 @@ int router(client_t *client, const char *request_data, size_t request_len) {
 
   parse_result_t parse_result = http_parse_request(persistent_ctx, request_data, request_len);
 
+  // Early processing for streaming handlers
+  if (persistent_ctx->headers_complete && 
+      !persistent_ctx->handler_invoked &&
+      persistent_ctx->body_streaming_enabled) {
+    
+    Arena *request_arena = client->connection_arena;
+    if (!request_arena) {
+      send_error(NULL, handle, 500);
+      return REQUEST_CLOSE;
+    }
+
+    Req *req = create_req(request_arena, handle);
+    Res *res = create_res(request_arena, handle);
+
+    if (!req || !res) {
+      send_error(request_arena, handle, 500);
+      return REQUEST_CLOSE;
+    }
+
+    res->keep_alive = persistent_ctx->keep_alive;
+
+    const char *path = persistent_ctx->url;
+    size_t path_len = persistent_ctx->path_length;
+
+    if (!path || path_len == 0) {
+      path = "/";
+      path_len = 1;
+    }
+
+    tokenized_path_t tokenized_path = { 0 };
+    if (tokenize_path(request_arena, path, path_len, &tokenized_path) != 0) {
+      send_error(request_arena, handle, 500);
+      return REQUEST_CLOSE;
+    }
+
+    if (populate_req_from_context(req, persistent_ctx, path, path_len) != 0) {
+      send_error(request_arena, handle, 500);
+      return REQUEST_CLOSE;
+    }
+
+    res->is_head_request = req->is_head_request;
+
+    route_match_t match;
+    if (route_trie_match(global_route_trie,
+                         persistent_ctx->parser,
+                         &tokenized_path,
+                         &match,
+                         request_arena)) {
+      
+      if (extract_url_params(request_arena, &match, &req->params) != 0) {
+        send_error(request_arena, handle, 500);
+        return REQUEST_CLOSE;
+      }
+
+      if (!match.handler) {
+        send_error(request_arena, handle, 500);
+        return REQUEST_CLOSE;
+      }
+
+      MiddlewareInfo *middleware_info = (MiddlewareInfo *)match.middleware_ctx;
+
+      // Need to mark as invoked before calling handler
+      persistent_ctx->handler_invoked = true;
+
+      if (!middleware_info) {
+        match.handler(req, res);
+      } else {
+        chain_start(req, res, middleware_info);
+      }
+
+      if (parse_result == PARSE_INCOMPLETE) {
+        if (persistent_ctx->body_paused) {
+          LOG_DEBUG("Body paused - backpressure applied");
+        }
+        return REQUEST_PENDING;
+      }
+
+      if (parse_result == PARSE_SUCCESS) {
+        body_on_complete(req);
+        
+        if (!res->replied)
+          return REQUEST_PENDING;
+        
+        return res->keep_alive ? REQUEST_KEEP_ALIVE : REQUEST_CLOSE;
+      }
+      
+      return REQUEST_PENDING;
+    }
+    
+    persistent_ctx->handler_invoked = false;
+  }
+
+  // Normal parsing flow (buffered requests)
   switch (parse_result) {
   case PARSE_SUCCESS:
     break;
 
   case PARSE_INCOMPLETE:
-    if (persistent_ctx->body_paused) {
+    if (persistent_ctx->body_paused)
       LOG_DEBUG("Body paused - backpressure applied");
-      return REQUEST_PENDING;
-    }
-    LOG_DEBUG("HTTP parsing incomplete - waiting for more data");
+
+    if (!persistent_ctx->handler_invoked)
+      LOG_DEBUG("HTTP parsing incomplete - waiting for more data");
+
     return REQUEST_PENDING;
 
   case PARSE_OVERFLOW:
@@ -187,6 +281,24 @@ int router(client_t *client, const char *request_data, size_t request_len) {
     return REQUEST_CLOSE;
   }
 
+  // If we get here with PARSE_SUCCESS and handler was already invoked (streaming),
+  // just complete the body callbacks
+  if (persistent_ctx->handler_invoked) {
+    Arena *request_arena = client->connection_arena;
+    if (!request_arena) {
+      send_error(NULL, handle, 500);
+      return REQUEST_CLOSE;
+    }
+
+    Req *req = create_req(request_arena, handle);
+    if (req && persistent_ctx->body_stream_ctx) {
+      body_on_complete(req);
+    }
+    
+    return persistent_ctx->keep_alive ? REQUEST_KEEP_ALIVE : REQUEST_CLOSE;
+  }
+
+  // Normal buffered request handling
   Arena *request_arena = client->connection_arena;
 
   if (!request_arena) {

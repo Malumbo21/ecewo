@@ -11,8 +11,7 @@ typedef enum {
   PARSE_OVERFLOW = -2 // Buffer overflow or size limit exceeded
 } parse_result_t;
 
-typedef struct
-{
+typedef struct {
   Arena *arena;
   llhttp_t *parser;
   llhttp_settings_t *settings;
@@ -50,10 +49,10 @@ typedef struct
   llhttp_errno_t last_error;
   const char *error_reason;
 
-  // Body streaming support
-  void *body_stream_ctx;        // BodyStreamCtx pointer
-  bool body_streaming_enabled;  // True if streaming mode active
-  bool body_paused;             // True if backpressure applied
+  void *body_stream_ctx;
+  bool body_streaming_enabled;
+  bool body_paused;
+  bool handler_invoked;
 } http_context_t;
 
 // Using in router.c

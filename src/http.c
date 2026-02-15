@@ -476,6 +476,7 @@ void http_context_init(http_context_t *context,
   context->body_stream_ctx = NULL;
   context->body_streaming_enabled = false;
   context->body_paused = false;
+  context->handler_invoked = false;
 }
 
 parse_result_t http_parse_request(http_context_t *context, const char *data, size_t len) {

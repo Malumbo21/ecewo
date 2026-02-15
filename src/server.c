@@ -314,6 +314,8 @@ static void client_context_reset(client_t *client) {
                     client->connection_arena,
                     &client->persistent_parser,
                     &client->persistent_settings);
+
+  client->persistent_context.handler_invoked = false;
 }
 
 static void close_cb(uv_handle_t* handle) {
