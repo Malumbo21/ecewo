@@ -316,6 +316,13 @@ static void client_context_reset(client_t *client) {
                     &client->persistent_settings);
 }
 
+static void close_cb(uv_handle_t* handle) {
+  if (handle->data) {
+    free(handle->data);
+    handle->data = NULL;
+  }
+}
+
 static void close_walk_cb(uv_handle_t *handle, void *arg) {
   (void)arg;
 
@@ -329,13 +336,7 @@ static void close_walk_cb(uv_handle_t *handle, void *arg) {
     uv_signal_stop((uv_signal_t *)handle);
   }
 
-  if (handle->type == UV_TIMER && handle->data) {
-    timer_data_t *data = (timer_data_t *)handle->data;
-    free(data);
-    handle->data = NULL;
-  }
-
-  uv_close(handle, NULL);
+  uv_close(handle, close_cb);
 }
 
 static void on_server_closed(uv_handle_t *handle) {
@@ -374,6 +375,9 @@ void server_shutdown(void) {
       uv_close((uv_handle_t *)&ecewo_server.sigterm_handle, NULL);
     }
   }
+
+  if (!uv_is_closing((uv_handle_t *)&ecewo_server.shutdown_async))
+    uv_close((uv_handle_t *)&ecewo_server.shutdown_async, NULL);
 
   // Stop accepting new connections
   if (ecewo_server.server && !uv_is_closing((uv_handle_t *)ecewo_server.server))
@@ -433,7 +437,8 @@ void server_shutdown(void) {
   // LIBUV LOOP CLEANUP
   uv_stop(ecewo_server.loop);
   uv_walk(ecewo_server.loop, close_walk_cb, NULL);
-  uv_run(ecewo_server.loop, UV_RUN_DEFAULT);
+  while (uv_run(ecewo_server.loop, UV_RUN_DEFAULT) != 0)
+    ;
 
   // uv_loop_close() is called in server_cleanup()
 }
@@ -493,6 +498,45 @@ uv_tcp_t *get_client_handle(Res *res) {
   return res ? res->client_socket : NULL;
 }
 
+#ifdef ECEWO_DEBUG
+static const char *handle_type_name(uv_handle_type t) {
+  switch (t) {
+    case UV_UNKNOWN_HANDLE: return "UNKNOWN";
+    case UV_ASYNC: return "ASYNC";
+    case UV_CHECK: return "CHECK";
+    case UV_FS_EVENT: return "FS_EVENT";
+    case UV_FS_POLL: return "FS_POLL";
+    case UV_HANDLE: return "HANDLE";
+    case UV_IDLE: return "IDLE";
+    case UV_NAMED_PIPE: return "NAMED_PIPE";
+    case UV_POLL: return "POLL";
+    case UV_PREPARE: return "PREPARE";
+    case UV_PROCESS: return "PROCESS";
+    case UV_STREAM: return "STREAM";
+    case UV_TCP: return "TCP";
+    case UV_TIMER: return "TIMER";
+    case UV_TTY: return "TTY";
+    case UV_UDP: return "UDP";
+    case UV_SIGNAL: return "SIGNAL";
+    default: return "OTHER";
+  }
+}
+
+static void inspect_handle_cb(uv_handle_t *handle, void *arg) {
+  (void)arg;
+  fprintf(stderr,
+          "loop-handle: type=%s closing=%d data=%p\n",
+          handle_type_name(handle->type),
+          uv_is_closing(handle),
+          handle->data);
+}
+
+static void inspect_loop(uv_loop_t *loop) {
+  fprintf(stderr, "Inspecting loop %p\n", (void*)loop);
+  uv_walk(loop, inspect_handle_cb, NULL);
+}
+#endif
+
 static void server_cleanup(void) {
   if (!ecewo_server.initialized)
     return;
@@ -500,28 +544,27 @@ static void server_cleanup(void) {
   if (!ecewo_server.shutdown_requested)
     server_shutdown();
 
-  stop_cleanup_timer();
   router_cleanup();
   arena_pool_destroy();
   destroy_date_cache();
+
+  #ifdef ECEWO_DEBUG
+  inspect_loop(ecewo_server.loop);
+  #endif
 
   // server_shutdown() already ran the loop, just need to close it here
   int result = uv_loop_close(ecewo_server.loop);
   if (result != 0) {
     LOG_ERROR("uv_loop_close failed: %s", uv_strerror(result));
-
-    uv_stop(ecewo_server.loop);
-    uv_walk(ecewo_server.loop, close_walk_cb, NULL);
-    uv_run(ecewo_server.loop, UV_RUN_DEFAULT);
-
-    result = uv_loop_close(ecewo_server.loop);
-    if (result != 0)
-      LOG_ERROR("Final uv_loop_close failed: %s", uv_strerror(result));
+    #ifdef ECEWO_DEBUG
+    inspect_loop(ecewo_server.loop);
+    #endif
   }
 
   if (ecewo_server.server && !ecewo_server.server_closed)
     free(ecewo_server.server);
 
+  free(ecewo_server.loop);
   memset(&ecewo_server, 0, sizeof(ecewo_server));
 }
 
@@ -565,9 +608,11 @@ int server_init(void) {
 
   memset(&ecewo_server, 0, sizeof(ecewo_server));
 
-  ecewo_server.loop = uv_default_loop();
+  ecewo_server.loop = malloc(sizeof(uv_loop_t));
   if (!ecewo_server.loop)
     return SERVER_INIT_FAILED;
+
+  uv_loop_init(ecewo_server.loop);
 
   arena_pool_init();
 
