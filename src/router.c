@@ -249,6 +249,8 @@ int router(client_t *client, const char *request_data, size_t request_len) {
     }
     
     persistent_ctx->handler_invoked = false;
+    persistent_ctx->body_streaming_enabled = false;
+    persistent_ctx->body_stream_ctx = NULL;
   }
 
   // Normal parsing flow (buffered requests)
@@ -269,10 +271,20 @@ int router(client_t *client, const char *request_data, size_t request_len) {
     LOG_ERROR("HTTP parsing failed: size limits exceeded");
     if (persistent_ctx->error_reason)
       LOG_ERROR(" - %s", persistent_ctx->error_reason);
+
+    persistent_ctx->body_stream_ctx = NULL;
+    persistent_ctx->body_streaming_enabled = false;
+    persistent_ctx->handler_invoked = false;
+
     send_error(NULL, handle, 413);
     return REQUEST_CLOSE;
 
   case PARSE_ERROR:
+    persistent_ctx->body_stream_ctx = NULL;
+    persistent_ctx->body_streaming_enabled = false;
+    persistent_ctx->handler_invoked = false;
+    return REQUEST_CLOSE;
+
   default:
     LOG_ERROR("HTTP parsing failed: %s", parse_result_to_string(parse_result));
     if (persistent_ctx->error_reason)
@@ -284,16 +296,15 @@ int router(client_t *client, const char *request_data, size_t request_len) {
   // If we get here with PARSE_SUCCESS and handler was already invoked (streaming),
   // just complete the body callbacks
   if (persistent_ctx->handler_invoked) {
-    Arena *request_arena = client->connection_arena;
-    if (!request_arena) {
-      send_error(NULL, handle, 500);
-      return REQUEST_CLOSE;
+    if (persistent_ctx->body_stream_ctx) {
+      BodyStreamCtx *stream_ctx = (BodyStreamCtx *)persistent_ctx->body_stream_ctx;
+      if (stream_ctx->req)
+        body_on_complete(stream_ctx->req);
     }
 
-    Req *req = create_req(request_arena, handle);
-    if (req && persistent_ctx->body_stream_ctx) {
-      body_on_complete(req);
-    }
+    persistent_ctx->body_stream_ctx = NULL;
+    persistent_ctx->body_streaming_enabled = false;
+    persistent_ctx->handler_invoked = false;
     
     return persistent_ctx->keep_alive ? REQUEST_KEEP_ALIVE : REQUEST_CLOSE;
   }
@@ -412,9 +423,6 @@ int router(client_t *client, const char *request_data, size_t request_len) {
     LOG_DEBUG("No middleware info");
     match.handler(req, res);
     
-    if (persistent_ctx->body_stream_ctx)
-      body_on_complete(req);
-    
     if (!res->replied)
       return REQUEST_PENDING;
     
@@ -422,9 +430,6 @@ int router(client_t *client, const char *request_data, size_t request_len) {
   }
 
   chain_start(req, res, middleware_info);
-  
-  if (persistent_ctx->body_stream_ctx)
-    body_on_complete(req);
   
   if (!res->replied)
     return REQUEST_PENDING;

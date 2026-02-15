@@ -1,12 +1,10 @@
-// TODO: Early return in router.c before buffering all the body.
-// TODO: Use req->context instead of passing void *ctx parameters // DONE
-
 #include "ecewo.h"
 #include "uv.h"
 #include "http.h"
 #include "arena.h"
 #include "server.h"
 #include "logger.h"
+#include "body.h"
 #include <stdlib.h>
 #include <string.h>
 
@@ -17,29 +15,8 @@
 #endif
 
 #ifndef BODY_DEFAULT_MAX_SIZE
-#define BODY_DEFAULT_MAX_SIZE (1UL * 1024UL * 1024UL)  // 1MB
+#define BODY_DEFAULT_MAX_SIZE (1UL * 1024UL * 1024UL)  /* 1MB */
 #endif
-
-typedef struct BodyStreamCtx {
-  // Request reference
-  Req *req;
-  client_t *client;
-  
-  // Configuration
-  bool streaming_enabled;
-  size_t max_size;
-  
-  // Metrics
-  size_t bytes_received;
-  bool first_chunk;
-  bool completed;
-  bool errored;
-  
-  // Streaming callbacks
-  BodyDataCb on_data;
-  BodyEndCb on_end;
-  BodyErrorCb on_error;
-} BodyStreamCtx;
 
 static const BodyStreamCtx *get_stream_ctx(const Req *req) {
   if (!req)
@@ -256,6 +233,11 @@ void body_on_complete(Req *req) {
   BodyStreamCtx *ctx = get_stream_ctx_mut(req);
   if (!ctx)
     return;
+
+  if (ctx->completed) {
+    LOG_DEBUG("body_on_complete called twice - ignoring");
+    return;
+  }
   
   ctx->completed = true;
   
