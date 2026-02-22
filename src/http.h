@@ -5,18 +5,24 @@
 #include "llhttp.h"
 
 typedef enum {
-  PARSE_SUCCESS = 0, // Parsing completed successfully
+  PARSE_SUCCESS = 0, // Fully parsed
   PARSE_INCOMPLETE = 1, // Need more data
+  PARSE_PAUSED = 2, // Paused at headers-complete
   PARSE_ERROR = -1, // Parse error occurred
-  PARSE_OVERFLOW = -2 // Buffer overflow or size limit exceeded
+  PARSE_OVERFLOW = -2 // Size limit exceeded
 } parse_result_t;
+
+// Called by on_body_cb when a chunk arrives in streaming mode.
+// Return  0 = continue
+// Return -1 = abort (size limit, etc.)
+typedef int (*body_chunk_cb_t)(void *udata, const char *chunk, size_t len);
 
 typedef struct {
   Arena *arena;
   llhttp_t *parser;
   llhttp_settings_t *settings;
 
-  // Dynamic URL parsing state
+  // URL / method
   char *url;
   size_t url_length;
   size_t url_capacity;
@@ -26,14 +32,17 @@ typedef struct {
   size_t method_length;
   size_t method_capacity;
 
+  // Headers
   request_t headers;
   request_t query_params;
   request_t url_params;
 
+  // Body (buffered)
   char *body;
   size_t body_length;
   size_t body_capacity;
 
+  // HTTP version / state
   uint8_t http_major;
   uint8_t http_minor;
   uint16_t status_code;
@@ -49,22 +58,25 @@ typedef struct {
   llhttp_errno_t last_error;
   const char *error_reason;
 
-  void *body_stream_ctx;
-  bool body_streaming_enabled;
-  bool body_paused;
-  bool handler_invoked;
+  // Streaming (opt-in)
+  // Set by the body_stream middleware before the parser resumes
+  // When non-NULL, on_body_cb delivers chunks here instead of buffering
+  body_chunk_cb_t on_body_chunk;
+  void *stream_udata;
+  bool drain_body;
 } http_context_t;
 
-// Using in router.c
+// Used in router.c
 parse_result_t http_parse_request(http_context_t *context, const char *data, size_t len);
 bool http_message_needs_eof(const http_context_t *context);
 parse_result_t http_finish_parsing(http_context_t *context);
 
-// Using in server.c
+// Used in server.c
 void http_context_init(http_context_t *context,
                        Arena *arena,
-                       llhttp_t *reused_parser,
-                       llhttp_settings_t *reused_settings);
+                       llhttp_t *parser,
+                       llhttp_settings_t *settings);
+
 int on_url_cb(llhttp_t *parser, const char *at, size_t length);
 int on_header_field_cb(llhttp_t *parser, const char *at, size_t length);
 int on_header_value_cb(llhttp_t *parser, const char *at, size_t length);
@@ -73,10 +85,7 @@ int on_body_cb(llhttp_t *parser, const char *at, size_t length);
 int on_headers_complete_cb(llhttp_t *parser);
 int on_message_complete_cb(llhttp_t *parser);
 
-void http_context_init(http_context_t *context,
-                       Arena *arena,
-                       llhttp_t *reused_parser,
-                       llhttp_settings_t *reused_settings);
+int ensure_array_capacity(Arena *arena, request_t *array);
 
 // Utility function for debugging
 const char *parse_result_to_string(parse_result_t result);

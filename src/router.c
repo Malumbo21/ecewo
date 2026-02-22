@@ -7,6 +7,7 @@
 #include "request.h"
 #include "body.h"
 #include "logger.h"
+#include <stdlib.h> // for atol
 
 extern void send_error(Arena *request_arena, uv_tcp_t *client_socket, int error_code);
 
@@ -119,6 +120,8 @@ static int populate_req_from_context(Req *req, http_context_t *ctx, const char *
     req->path[path_len] = '\0';
   }
 
+  // Body only available in buffered mode at this point
+  // In streaming mode it arrives via on_body_chunk callbacks after resume
   if (ctx->body && ctx->body_length > 0) {
     req->body = arena_alloc(arena, ctx->body_length + 1);
     if (!req->body)
@@ -144,295 +147,308 @@ static void noop_route_handler(Req *req, Res *res) {
   (void)res;
 }
 
-int router(client_t *client, const char *request_data, size_t request_len) {
-  uv_tcp_t *handle = (uv_tcp_t *)&client->handle;
-  http_context_t *persistent_ctx = &client->persistent_context;
+// Matches a route and invokes the handler/middleware chain.
+// Returns 0 on success, -1 if a fatal error occurred (500 already sent).
+// req_out / res_out are set on success so the caller can inspect res->replied.
+static int dispatch(Arena *arena, uv_tcp_t *handle, http_context_t *ctx, client_t *client,
+                    const char *path, size_t path_len, Req **req_out, Res **res_out) {
+  Req *req = create_req(arena, handle);
+  Res *res = create_res(arena, handle);
+  if (!req || !res) {
+    send_error(arena, handle, 500);
+    return -1;
+  }
 
+  res->keep_alive = ctx->keep_alive;
+  res->is_head_request = (ctx->method_length == 4 && memcmp(ctx->method, "HEAD", 4) == 0);
+
+  if (populate_req_from_context(req, ctx, path, path_len) != 0) {
+    send_error(arena, handle, 500);
+    return -1;
+  }
+  req->is_head_request = res->is_head_request;
+
+  if (req_out)
+    *req_out = req;
+  if (res_out)
+    *res_out = res;
+
+  if (!global_route_trie || !ctx->method) {
+    set_header(res, "Content-Type", "text/plain");
+    reply(res, 404, "404 Not Found", 13);
+    return 0;
+  }
+
+  tokenized_path_t tok = { 0 };
+  if (tokenize_path(arena, path, path_len, &tok) != 0) {
+    send_error(arena, handle, 500);
+    return -1;
+  }
+
+  route_match_t match;
+  if (!route_trie_match(global_route_trie, ctx->parser, &tok, &match, arena)) {
+    // OPTIONS preflight: give global middleware a chance (e.g. CORS)
+    if (ctx->method_length == 7 && memcmp(ctx->method, "OPTIONS", 7) == 0) {
+      MiddlewareInfo dummy = { NULL, 0, noop_route_handler };
+      chain_start(req, res, &dummy);
+      if (res->replied)
+        return 0;
+    }
+    set_header(res, "Content-Type", "text/plain");
+    reply(res, 404, "404 Not Found", 13);
+    return 0;
+  }
+
+  if (extract_url_params(arena, &match, &req->params) != 0) {
+    send_error(arena, handle, 500);
+    return -1;
+  }
+
+  if (!match.handler) {
+    send_error(arena, handle, 500);
+    return -1;
+  }
+
+  MiddlewareInfo *mw = (MiddlewareInfo *)match.middleware_ctx;
+
+  bool has_stream_middleware = false;
+  if (mw) {
+    for (uint16_t i = 0; i < mw->middleware_count; i++) {
+      if ((void *)mw->middleware[i] == (void *)body_stream) {
+        has_stream_middleware = true;
+        break;
+      }
+    }
+  }
+  if (!has_stream_middleware) {
+    for (uint16_t i = 0; i < global_middleware_count; i++) {
+      if ((void *)global_middleware[i] == (void *)body_stream) {
+        has_stream_middleware = true;
+        break;
+      }
+    }
+  }
+
+  bool is_chunked = false;
+  bool has_body = false;
+  long content_length = 0;
+
+  for (uint16_t i = 0; i < ctx->headers.count; i++) {
+    const char *k = ctx->headers.items[i].key;
+    const char *v = ctx->headers.items[i].value;
+
+    if (strcasecmp(k, "Content-Length") == 0 && strcmp(v, "0") != 0) {
+      has_body = true;
+      content_length = atol(v);
+    }
+
+    if (strcasecmp(k, "Transfer-Encoding") == 0) {
+      has_body = true;
+      is_chunked = true;
+    }
+  }
+
+  #ifndef BUFFERED_BODY_MAX_SIZE
+  #define BUFFERED_BODY_MAX_SIZE (1UL  * 1024UL * 1024UL) /* 1MB */
+  #endif
+
+  // Deny large body if no streaming middleware
+  if (!ctx->on_body_chunk && has_body &&
+      (content_length > (long)BUFFERED_BODY_MAX_SIZE || is_chunked)) {
+    set_header(res, "Content-Type", "text/plain");
+    res->keep_alive = false;
+    ctx->drain_body = true;
+    reply(res, 413, "Payload Too Large", 17);
+    return 0;
+  }
+
+  if (!has_stream_middleware && has_body && !ctx->message_complete) {
+    if (client) {
+      client->pending_handler = match.handler;
+      client->pending_mw      = (void *)mw;
+      client->pending_req     = req;
+      client->pending_res     = res;
+      client->handler_pending = true;
+    }
+    return 0;
+  }
+
+  if (!has_stream_middleware && ctx->body_length > 0) {
+    req->body     = ctx->body;
+    req->body_len = ctx->body_length;
+  }
+
+  if (mw)
+    chain_start(req, res, mw);
+  else
+    match.handler(req, res);
+
+  return 0;
+}
+
+int router(client_t *client, const char *request_data, size_t request_len) {
   if (!client || !request_data || request_len == 0) {
-    if (client && client->handle.data)
-      send_error(NULL, handle, 400);
+    if (client)
+      send_error(NULL, (uv_tcp_t *)&client->handle, 400);
     return REQUEST_CLOSE;
   }
 
-  if (uv_is_closing((uv_handle_t *)&client->handle))
+  uv_tcp_t *handle = (uv_tcp_t *)&client->handle;
+  http_context_t *ctx = &client->persistent_context;
+  Arena *arena = client->connection_arena;
+
+  if (uv_is_closing((uv_handle_t *)handle))
     return REQUEST_CLOSE;
 
-  parse_result_t parse_result = http_parse_request(persistent_ctx, request_data, request_len);
+  // Feed data
+  parse_result_t result = http_parse_request(ctx, request_data, request_len);
 
-  // Early processing for streaming handlers
-  if (persistent_ctx->headers_complete && 
-      !persistent_ctx->handler_invoked &&
-      persistent_ctx->body_streaming_enabled) {
-    
-    Arena *request_arena = client->connection_arena;
-    if (!request_arena) {
+  // Headers complete, invoke handler
+  if (result == PARSE_PAUSED) {
+    if (!arena) {
       send_error(NULL, handle, 500);
       return REQUEST_CLOSE;
     }
 
-    Req *req = create_req(request_arena, handle);
-    Res *res = create_res(request_arena, handle);
-
-    if (!req || !res) {
-      send_error(request_arena, handle, 500);
-      return REQUEST_CLOSE;
-    }
-
-    res->keep_alive = persistent_ctx->keep_alive;
-
-    const char *path = persistent_ctx->url;
-    size_t path_len = persistent_ctx->path_length;
-
+    const char *path = ctx->url;
+    size_t path_len = ctx->path_length;
     if (!path || path_len == 0) {
       path = "/";
       path_len = 1;
     }
 
-    tokenized_path_t tokenized_path = { 0 };
-    if (tokenize_path(request_arena, path, path_len, &tokenized_path) != 0) {
-      send_error(request_arena, handle, 500);
+    Req *req = NULL;
+    Res *res = NULL;
+
+    if (dispatch(arena, handle, ctx, client, path, path_len, &req, &res) != 0)
       return REQUEST_CLOSE;
-    }
 
-    if (populate_req_from_context(req, persistent_ctx, path, path_len) != 0) {
-      send_error(request_arena, handle, 500);
-      return REQUEST_CLOSE;
-    }
+    // Calculate remaining bytes before touching the parser
+    // llhttp_get_error_pos() points to where the pause happened
+    // Everything after that has not been parsed yet
+    const char *pause_pos = llhttp_get_error_pos(ctx->parser);
+    size_t consumed = pause_pos ? (size_t)(pause_pos - request_data) : request_len;
+    size_t left = request_len > consumed ? request_len - consumed : 0;
 
-    res->is_head_request = req->is_head_request;
+    llhttp_resume(ctx->parser);
 
-    route_match_t match;
-    if (route_trie_match(global_route_trie,
-                         persistent_ctx->parser,
-                         &tokenized_path,
-                         &match,
-                         request_arena)) {
-      
-      if (extract_url_params(request_arena, &match, &req->params) != 0) {
-        send_error(request_arena, handle, 500);
-        return REQUEST_CLOSE;
-      }
-
-      if (!match.handler) {
-        send_error(request_arena, handle, 500);
-        return REQUEST_CLOSE;
-      }
-
-      MiddlewareInfo *middleware_info = (MiddlewareInfo *)match.middleware_ctx;
-
-      // Need to mark as invoked before calling handler
-      persistent_ctx->handler_invoked = true;
-
-      if (!middleware_info) {
-        match.handler(req, res);
-      } else {
-        chain_start(req, res, middleware_info);
-      }
-
-      if (parse_result == PARSE_INCOMPLETE) {
-        if (persistent_ctx->body_paused) {
-          LOG_DEBUG("Body paused - backpressure applied");
-        }
+    if (res && res->replied) {
+      if (ctx->drain_body)
         return REQUEST_PENDING;
+      return res->keep_alive ? REQUEST_KEEP_ALIVE : REQUEST_CLOSE;
+    }
+
+    // Handler wants the body, feed remaining bytes now
+    if (left > 0)
+      result = http_parse_request(ctx, pause_pos, left);
+    else
+      result = ctx->message_complete ? PARSE_SUCCESS : PARSE_INCOMPLETE;
+
+    // Result after resume
+    switch (result) {
+    case PARSE_SUCCESS:
+      if (ctx->drain_body) {
+        return REQUEST_CLOSE;
+      }
+      if (ctx->on_body_chunk && req) {
+        body_stream_complete(req);
+      } else if (client->handler_pending) {
+        client->handler_pending = false;
+        Req *preq = client->pending_req;
+        Res *pres = client->pending_res;
+        if (preq && pres) {
+          preq->body     = ctx->body_length > 0 ? ctx->body : NULL;
+          preq->body_len = ctx->body_length;
+          MiddlewareInfo *pmw = (MiddlewareInfo *)client->pending_mw;
+          if (pmw)
+            chain_start(preq, pres, pmw);
+          else if (client->pending_handler)
+            client->pending_handler(preq, pres);
+        }
+      }
+      {
+        Res *final_res = (client->pending_res && client->pending_res->replied)
+                         ? client->pending_res
+                         : res;
+        if (final_res && !final_res->replied)
+          return REQUEST_PENDING;
+        return final_res && final_res->keep_alive ? REQUEST_KEEP_ALIVE : REQUEST_CLOSE;
       }
 
-      if (parse_result == PARSE_SUCCESS) {
-        body_on_complete(req);
-        
-        if (!res->replied)
-          return REQUEST_PENDING;
-        
-        return res->keep_alive ? REQUEST_KEEP_ALIVE : REQUEST_CLOSE;
-      }
-      
+    case PARSE_INCOMPLETE:
+      // Body still arriving over the network, wait for more data
       return REQUEST_PENDING;
+
+    case PARSE_OVERFLOW:
+      LOG_ERROR("Body too large: %s", ctx->error_reason ? ctx->error_reason : "");
+      send_error(arena, handle, 413);
+      return REQUEST_CLOSE;
+
+    case PARSE_PAUSED:
+    case PARSE_ERROR:
+    default:
+      LOG_ERROR("Parse error after resume: %s",
+                ctx->error_reason ? ctx->error_reason : "unknown");
+      send_error(arena, handle, 400);
+      return REQUEST_CLOSE;
     }
-    
-    persistent_ctx->handler_invoked = false;
-    persistent_ctx->body_streaming_enabled = false;
-    persistent_ctx->body_stream_ctx = NULL;
   }
 
-  // Normal parsing flow (buffered requests)
-  switch (parse_result) {
-  case PARSE_SUCCESS:
-    break;
-
+  // Fallthrough: result before headers-complete
+  switch (result) {
   case PARSE_INCOMPLETE:
-    if (persistent_ctx->body_paused)
-      LOG_DEBUG("Body paused - backpressure applied");
-
-    if (!persistent_ctx->handler_invoked)
-      LOG_DEBUG("HTTP parsing incomplete - waiting for more data");
-
     return REQUEST_PENDING;
 
   case PARSE_OVERFLOW:
-    LOG_ERROR("HTTP parsing failed: size limits exceeded");
-    if (persistent_ctx->error_reason)
-      LOG_ERROR(" - %s", persistent_ctx->error_reason);
-
-    persistent_ctx->body_stream_ctx = NULL;
-    persistent_ctx->body_streaming_enabled = false;
-    persistent_ctx->handler_invoked = false;
-
+    LOG_ERROR("Request too large: %s", ctx->error_reason ? ctx->error_reason : "");
     send_error(NULL, handle, 413);
     return REQUEST_CLOSE;
 
   case PARSE_ERROR:
-    persistent_ctx->body_stream_ctx = NULL;
-    persistent_ctx->body_streaming_enabled = false;
-    persistent_ctx->handler_invoked = false;
+    LOG_ERROR("Parse error: %s", ctx->error_reason ? ctx->error_reason : "unknown");
+    send_error(NULL, handle, 400);
     return REQUEST_CLOSE;
 
+  case PARSE_SUCCESS:
+    break; // EOF-terminated request completed without pausing
+
   default:
-    LOG_ERROR("HTTP parsing failed: %s", parse_result_to_string(parse_result));
-    if (persistent_ctx->error_reason)
-      LOG_ERROR(" - %s", persistent_ctx->error_reason);
     send_error(NULL, handle, 400);
     return REQUEST_CLOSE;
   }
 
-  // If we get here with PARSE_SUCCESS and handler was already invoked (streaming),
-  // just complete the body callbacks
-  if (persistent_ctx->handler_invoked) {
-    if (persistent_ctx->body_stream_ctx) {
-      BodyStreamCtx *stream_ctx = (BodyStreamCtx *)persistent_ctx->body_stream_ctx;
-      if (stream_ctx->req)
-        body_on_complete(stream_ctx->req);
-    }
-
-    persistent_ctx->body_stream_ctx = NULL;
-    persistent_ctx->body_streaming_enabled = false;
-    persistent_ctx->handler_invoked = false;
-    
-    return persistent_ctx->keep_alive ? REQUEST_KEEP_ALIVE : REQUEST_CLOSE;
-  }
-
-  // Normal buffered request handling
-  Arena *request_arena = client->connection_arena;
-
-  if (!request_arena) {
+  // PARSE_SUCCESS (EOF-terminated, no pause)
+  if (!arena) {
     send_error(NULL, handle, 500);
     return REQUEST_CLOSE;
   }
 
-  Req *req = create_req(request_arena, handle);
-  Res *res = create_res(request_arena, handle);
-
-  if (!req || !res) {
-    send_error(request_arena, handle, 500);
+  if (ctx->drain_body)
     return REQUEST_CLOSE;
-  }
 
-  if (http_message_needs_eof(persistent_ctx)) {
-    parse_result_t finish_result = http_finish_parsing(persistent_ctx);
-    if (finish_result != PARSE_SUCCESS) {
-      LOG_ERROR("HTTP finish parsing failed: %s", parse_result_to_string(finish_result));
-
-      if (persistent_ctx->error_reason)
-        LOG_ERROR(" - %s", persistent_ctx->error_reason);
-
-      body_on_error_internal(req, persistent_ctx->error_reason ? 
-                             persistent_ctx->error_reason : "Parse error");
-
-      send_error(request_arena, handle, 400);
+  if (http_message_needs_eof(ctx)) {
+    if (http_finish_parsing(ctx) != PARSE_SUCCESS) {
+      LOG_ERROR("Finish parse failed: %s", ctx->error_reason ? ctx->error_reason : "");
+      send_error(arena, handle, 400);
       return REQUEST_CLOSE;
     }
   }
 
-  res->keep_alive = persistent_ctx->keep_alive;
-
-  const char *path = persistent_ctx->url;
-  size_t path_len = persistent_ctx->path_length;
-
+  const char *path = ctx->url;
+  size_t path_len = ctx->path_length;
   if (!path || path_len == 0) {
     path = "/";
     path_len = 1;
   }
 
-  if (!global_route_trie || !persistent_ctx->method) {
-    LOG_DEBUG("Missing route trie (%p) or method (%s)",
-              (void *)global_route_trie,
-              persistent_ctx->method ? persistent_ctx->method : "NULL");
+  Req *req = NULL;
+  Res *res = NULL;
 
-    // 404 but still success response
-    bool keep_alive = res->keep_alive;
-    const char *not_found_msg = "404 Not Found";
-    set_header(res, "Content-Type", "text/plain");
-    reply(res, 404, not_found_msg, strlen(not_found_msg));
-    return keep_alive ? REQUEST_KEEP_ALIVE : REQUEST_CLOSE;
-  }
-
-  tokenized_path_t tokenized_path = { 0 };
-  if (tokenize_path(request_arena, path, path_len, &tokenized_path) != 0) {
-    send_error(request_arena, handle, 500);
+  if (dispatch(arena, handle, ctx, client, path, path_len, &req, &res) != 0)
     return REQUEST_CLOSE;
-  }
 
-  if (populate_req_from_context(req, persistent_ctx, path, path_len) != 0) {
-    send_error(request_arena, handle, 500);
-    return REQUEST_CLOSE;
-  }
-
-  res->is_head_request = req->is_head_request;
-
-  route_match_t match;
-  if (!route_trie_match(global_route_trie,
-                        persistent_ctx->parser,
-                        &tokenized_path,
-                        &match,
-                        request_arena)) {
-
-    LOG_DEBUG("Route not found: %s %s", persistent_ctx->method, path);
-
-    // If this is an OPTIONS preflight, run the global middleware
-    // so middleware like CORS can reply without requiring an OPTIONS route
-    if (persistent_ctx->method_length == 7 && memcmp(persistent_ctx->method, "OPTIONS", 7) == 0) {
-      // Create a small dummy MiddlewareInfo with a no-op handler.
-      MiddlewareInfo dummy_mw;
-      dummy_mw.middleware = NULL;
-      dummy_mw.middleware_count = 0;
-      dummy_mw.handler = noop_route_handler;
-
-      chain_start(req, res, &dummy_mw);
-
-      if (res->replied)
-        return res->keep_alive ? REQUEST_KEEP_ALIVE : REQUEST_CLOSE;
-    }
-
-    bool keep_alive = res->keep_alive;
-    set_header(res, "Content-Type", "text/plain");
-    reply(res, 404, "404 Not Found", 13);
-    return keep_alive ? REQUEST_KEEP_ALIVE : REQUEST_CLOSE;
-  }
-
-  if (extract_url_params(request_arena, &match, &req->params) != 0) {
-    send_error(request_arena, handle, 500);
-    return REQUEST_CLOSE;
-  }
-
-  if (!match.handler) {
-    send_error(request_arena, handle, 500);
-    return REQUEST_CLOSE;
-  }
-
-  MiddlewareInfo *middleware_info = (MiddlewareInfo *)match.middleware_ctx;
-
-  if (!middleware_info) {
-    LOG_DEBUG("No middleware info");
-    match.handler(req, res);
-    
-    if (!res->replied)
-      return REQUEST_PENDING;
-    
-    return res->keep_alive ? REQUEST_KEEP_ALIVE : REQUEST_CLOSE;
-  }
-
-  chain_start(req, res, middleware_info);
-  
-  if (!res->replied)
+  if (res && !res->replied)
     return REQUEST_PENDING;
 
-  return res->keep_alive ? REQUEST_KEEP_ALIVE : REQUEST_CLOSE;
+  return res && res->keep_alive ? REQUEST_KEEP_ALIVE : REQUEST_CLOSE;
 }

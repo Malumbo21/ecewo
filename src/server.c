@@ -314,11 +314,9 @@ static void client_context_reset(client_t *client) {
                     client->connection_arena,
                     &client->persistent_parser,
                     &client->persistent_settings);
-
-  client->persistent_context.handler_invoked = false;
 }
 
-static void close_cb(uv_handle_t* handle) {
+static void close_cb(uv_handle_t *handle) {
   if (handle->data) {
     free(handle->data);
     handle->data = NULL;
@@ -550,17 +548,17 @@ static void server_cleanup(void) {
   arena_pool_destroy();
   destroy_date_cache();
 
-  #ifdef ECEWO_DEBUG
+#ifdef ECEWO_DEBUG
   inspect_loop(ecewo_server.loop);
-  #endif
+#endif
 
   // server_shutdown() already ran the loop, just need to close it here
   int result = uv_loop_close(ecewo_server.loop);
   if (result != 0) {
     LOG_ERROR("uv_loop_close failed: %s", uv_strerror(result));
-    #ifdef ECEWO_DEBUG
+#ifdef ECEWO_DEBUG
     inspect_loop(ecewo_server.loop);
-    #endif
+#endif
   }
 
   if (ecewo_server.server && !ecewo_server.server_closed)
@@ -832,13 +830,13 @@ void server_on_read(uv_stream_t *stream, ssize_t nread, const uv_buf_t *buf) {
 void resume_client_read(client_t *client) {
   if (!client || client->closing)
     return;
-  
+
   if (uv_is_closing((uv_handle_t *)&client->handle))
     return;
-  
-  int result = uv_read_start((uv_stream_t *)&client->handle, 
-                              server_alloc_buffer, 
-                              server_on_read);
+
+  int result = uv_read_start((uv_stream_t *)&client->handle,
+                             server_alloc_buffer,
+                             server_on_read);
   if (result != 0) {
     LOG_ERROR("Failed to resume read: %s", uv_strerror(result));
   } else {
@@ -895,8 +893,8 @@ static void on_connection(uv_stream_t *server, int status) {
   if (uv_accept(server, (uv_stream_t *)&client->handle) == 0) {
     uv_tcp_nodelay(&client->handle, 1);
 
-    if (uv_read_start((uv_stream_t *)&client->handle, 
-                      server_alloc_buffer, 
+    if (uv_read_start((uv_stream_t *)&client->handle,
+                      server_alloc_buffer,
                       server_on_read) == 0) {
       add_client_to_list(client);
       ecewo_server.active_connections++;

@@ -2,7 +2,6 @@
 #include <limits.h>
 #include <ctype.h>
 #include "http.h"
-#include "body.h"
 #include "logger.h"
 
 #define MIN_BUFFER_SIZE 64
@@ -22,13 +21,10 @@
 #define ERROR_REASON_PAYLOAD_TOO_LARGE "Request payload exceeds maximum size"
 #define ERROR_REASON_INVALID_HEADER_FIELD "Invalid or missing header field"
 #define ERROR_REASON_MEMORY_ALLOCATION "Memory allocation failed"
-#define ERROR_REASON_INVALID_METHOD "Invalid HTTP method"
 
 static size_t calculate_next_size(size_t current, size_t needed) {
-  if (needed > ABSOLUTE_MAX_REQUEST) {
-    LOG_DEBUG("Request too large: %zu bytes", needed);
+  if (needed > ABSOLUTE_MAX_REQUEST)
     return 0;
-  }
 
   if (needed <= current)
     return current;
@@ -64,10 +60,8 @@ static int ensure_buffer_capacity(Arena *arena, char **buffer, size_t *capacity,
   if (total_needed <= *capacity)
     return 0;
 
-  if (total_needed > ABSOLUTE_MAX_REQUEST) {
-    LOG_DEBUG("Request exceeds maximum size: %zu bytes", total_needed);
+  if (total_needed > ABSOLUTE_MAX_REQUEST)
     return -2;
-  }
 
   size_t new_capacity = calculate_next_size(*capacity, total_needed);
   if (new_capacity == 0 || new_capacity < total_needed)
@@ -94,8 +88,7 @@ static void parse_query(Arena *arena, const char *query_start, size_t query_len,
   int param_count = 1;
   for (size_t i = 0; i < query_len; i++) {
     if (query_start[i] == '&') {
-      param_count++;
-      if (param_count > MAX_QUERY_PARAMS) {
+      if (++param_count > MAX_QUERY_PARAMS) {
         param_count = MAX_QUERY_PARAMS;
         break;
       }
@@ -178,7 +171,9 @@ int on_url_cb(llhttp_t *parser, const char *at, size_t length) {
   if (result == -2) {
     llhttp_set_error_reason(parser, ERROR_REASON_URL_TOO_LONG);
     return HPE_USER;
-  } else if (result != 0) {
+  }
+
+  if (result != 0) {
     llhttp_set_error_reason(parser, ERROR_REASON_MEMORY_ALLOCATION);
     return HPE_INTERNAL;
   }
@@ -209,11 +204,13 @@ int on_header_field_cb(llhttp_t *parser, const char *at, size_t length) {
   context->header_field_length = 0;
 
   int result = ensure_buffer_capacity(context->arena, &context->current_header_field,
-                                      &context->header_field_capacity, 0, length);
+                                 &context->header_field_capacity, 0, length);
   if (result == -2) {
     llhttp_set_error_reason(parser, ERROR_REASON_HEADER_TOO_LARGE);
     return HPE_USER;
-  } else if (result != 0) {
+  }
+
+  if (result != 0) {
     llhttp_set_error_reason(parser, ERROR_REASON_MEMORY_ALLOCATION);
     return HPE_INTERNAL;
   }
@@ -239,7 +236,7 @@ int ensure_array_capacity(Arena *arena, request_t *array) {
 
   if (new_capacity > MAX_HEADERS_COUNT)
     new_capacity = MAX_HEADERS_COUNT;
-
+  
   if (new_capacity <= array->capacity)
     return -1;
 
@@ -276,26 +273,26 @@ int on_header_value_cb(llhttp_t *parser, const char *at, size_t length) {
     return HPE_INTERNAL;
   }
 
-  char *key_copy = arena_alloc(context->arena, context->header_field_length + 1);
-  if (!key_copy) {
+  char *key = arena_alloc(context->arena, context->header_field_length + 1);
+  if (!key) {
     llhttp_set_error_reason(parser, ERROR_REASON_MEMORY_ALLOCATION);
     return HPE_INTERNAL;
   }
 
-  memcpy(key_copy, context->current_header_field, context->header_field_length);
-  key_copy[context->header_field_length] = '\0';
+  memcpy(key, context->current_header_field, context->header_field_length);
+  key[context->header_field_length] = '\0';
 
-  char *value_copy = arena_alloc(context->arena, length + 1);
-  if (!value_copy) {
+  char *val = arena_alloc(context->arena, length + 1);
+  if (!val) {
     llhttp_set_error_reason(parser, ERROR_REASON_MEMORY_ALLOCATION);
     return HPE_INTERNAL;
   }
 
-  memcpy(value_copy, at, length);
-  value_copy[length] = '\0';
+  memcpy(val, at, length);
+  val[length] = '\0';
 
-  context->headers.items[context->headers.count].key = key_copy;
-  context->headers.items[context->headers.count].value = value_copy;
+  context->headers.items[context->headers.count].key = key;
+  context->headers.items[context->headers.count].value = val;
   context->headers.count++;
 
   return HPE_OK;
@@ -313,14 +310,16 @@ int on_method_cb(llhttp_t *parser, const char *at, size_t length) {
   }
 
   int result = ensure_buffer_capacity(context->arena,
-                                      &context->method,
-                                      &context->method_capacity,
-                                      context->method_length,
-                                      length);
+                                    &context->method,
+                                    &context->method_capacity,
+                                    context->method_length,
+                                    length);
   if (result == -2) {
     llhttp_set_error_reason(parser, ERROR_REASON_METHOD_TOO_LONG);
     return HPE_USER;
-  } else if (result != 0) {
+  }
+
+  if (result != 0) {
     llhttp_set_error_reason(parser, ERROR_REASON_MEMORY_ALLOCATION);
     return HPE_INTERNAL;
   }
@@ -333,39 +332,47 @@ int on_method_cb(llhttp_t *parser, const char *at, size_t length) {
 }
 
 int on_body_cb(llhttp_t *parser, const char *at, size_t length) {
-  if (!parser || !parser->data || !at || length == 0)
+  if (!parser || !parser->data)
     return HPE_INTERNAL;
+  if (!at || length == 0)
+    return HPE_OK;
 
   http_context_t *context = (http_context_t *)parser->data;
 
-  if (context->body_streaming_enabled && context->body_stream_ctx) {
-    int result = body_stream_on_chunk(context->body_stream_ctx, at, length);
-    
+  // Streaming mode (opt-in via body_stream middleware)
+  if (context->on_body_chunk) {
+    int result = context->on_body_chunk(context->stream_udata, at, length);
     if (result < 0) {
       llhttp_set_error_reason(parser, ERROR_REASON_PAYLOAD_TOO_LARGE);
       return HPE_USER;
     }
-    
-    if (result == 1) {
-      context->body_paused = true;
-      LOG_DEBUG("Body parsing paused - backpressure");
-      return HPE_PAUSED;
-    }
-    
     return HPE_OK;
   }
 
-  // Default buffering
+  if (context->drain_body)
+    return HPE_OK;
+
+  #ifndef BUFFERED_BODY_MAX_SIZE
+  #define BUFFERED_BODY_MAX_SIZE (1UL  * 1024UL * 1024UL) /* 1MB */
+  #endif
+
+  if (context->body_length + length > BUFFERED_BODY_MAX_SIZE) {
+    llhttp_set_error_reason(parser, ERROR_REASON_PAYLOAD_TOO_LARGE);
+    return HPE_USER;
+  }
+
+  // Default behavior: buffer in memory
   int result = ensure_buffer_capacity(context->arena,
                                       &context->body,
                                       &context->body_capacity,
                                       context->body_length,
                                       length);
-
   if (result == -2) {
     llhttp_set_error_reason(parser, ERROR_REASON_PAYLOAD_TOO_LARGE);
     return HPE_USER; // Payload too large
-  } else if (result != 0) {
+  }
+
+  if (result != 0) {
     llhttp_set_error_reason(parser, ERROR_REASON_MEMORY_ALLOCATION);
     return HPE_INTERNAL;
   }
@@ -387,15 +394,23 @@ int on_headers_complete_cb(llhttp_t *parser) {
   context->keep_alive = llhttp_should_keep_alive(parser);
   context->headers_complete = 1;
 
-  // Signal that headers are complete
-  // This allows streaming handlers to start processing
-  // Note: Router will need to handle this signal for early invocation
-  if (context->body_streaming_enabled && context->body_stream_ctx) {
-    LOG_DEBUG("Headers complete - streaming mode ready");
-    // Router will detect headers_complete=1 and invoke handler early
+  // Parse path and query string
+  if (context->url && context->url_length > 0) {
+    const char *qmark = memchr(context->url, '?', context->url_length);
+    if (qmark) {
+      context->path_length = qmark - context->url;
+      size_t qlen = context->url_length - context->path_length - 1;
+      parse_query(context->arena, qmark + 1, qlen, &context->query_params);
+    } else {
+      context->path_length = context->url_length;
+    }
   }
 
-  return HPE_OK;
+  // Pause here so the router can invoke the handler before the body arrives.
+  // The router will resume the parser after the handler runs.
+  // If the handler registered body_on_data() the body will stream;
+  // otherwise the router re-enables buffering and resumes normally.
+  return HPE_PAUSED;
 }
 
 int on_message_complete_cb(llhttp_t *parser) {
@@ -404,79 +419,54 @@ int on_message_complete_cb(llhttp_t *parser) {
 
   http_context_t *context = (http_context_t *)parser->data;
   context->message_complete = 1;
-
-  if (context->url && context->url_length > 0) {
-    const char *qmark = memchr(context->url, '?', context->url_length);
-    if (qmark) {
-      context->path_length = qmark - context->url;
-      size_t query_len = context->url_length - context->path_length - 1;
-      parse_query(context->arena, qmark + 1, query_len, &context->query_params);
-    } else {
-      context->path_length = context->url_length;
-    }
-  }
-
   return HPE_OK;
 }
 
 void http_context_init(http_context_t *context,
                        Arena *arena,
-                       llhttp_t *reused_parser,
-                       llhttp_settings_t *reused_settings) {
-  if (!context || !arena || !reused_parser || !reused_settings)
+                       llhttp_t *parser,
+                       llhttp_settings_t *settings) {
+  if (!context || !arena || !parser || !settings)
     return;
 
   memset(context, 0, sizeof(http_context_t));
   context->arena = arena;
-
-  context->parser = reused_parser;
-  context->settings = reused_settings;
-
+  context->parser = parser;
+  context->settings = settings;
   context->parser->data = context;
 
   context->url_capacity = 512;
   context->url = arena_alloc(arena, context->url_capacity);
-  context->url_length = 0;
   if (context->url)
     context->url[0] = '\0';
 
   context->method_capacity = 32;
   context->method = arena_alloc(arena, context->method_capacity);
-  context->method_length = 0;
   if (context->method)
     context->method[0] = '\0';
 
   context->header_field_capacity = 128;
   context->current_header_field = arena_alloc(arena, context->header_field_capacity);
-  context->header_field_length = 0;
   if (context->current_header_field)
     context->current_header_field[0] = '\0';
 
   context->body_capacity = 1024;
   context->body = arena_alloc(arena, context->body_capacity);
-  context->body_length = 0;
   if (context->body)
     context->body[0] = '\0';
 
-  context->headers.count = 0;
   context->headers.capacity = 32;
   context->headers.items = arena_alloc(arena, context->headers.capacity * sizeof(request_item_t));
   if (context->headers.items)
     memset(context->headers.items, 0, context->headers.capacity * sizeof(request_item_t));
 
-  memset(&context->query_params, 0, sizeof(request_t));
-  memset(&context->url_params, 0, sizeof(request_t));
-
   context->keep_alive = 1;
-  context->message_complete = 0;
-  context->headers_complete = 0;
   context->last_error = HPE_OK;
-  context->error_reason = NULL;
 
-  context->body_stream_ctx = NULL;
-  context->body_streaming_enabled = false;
-  context->body_paused = false;
-  context->handler_invoked = false;
+  // Streaming is off by default
+  context->on_body_chunk = NULL;
+  context->stream_udata = NULL;
+  context->drain_body = false;
 }
 
 parse_result_t http_parse_request(http_context_t *context, const char *data, size_t len) {
@@ -490,17 +480,11 @@ parse_result_t http_parse_request(http_context_t *context, const char *data, siz
 
   switch (err) {
   case HPE_OK:
-    if (context->message_complete)
-      return PARSE_SUCCESS;
-    return PARSE_INCOMPLETE;
+    return context->message_complete ? PARSE_SUCCESS : PARSE_INCOMPLETE;
 
   case HPE_PAUSED:
-    return PARSE_INCOMPLETE;
-
   case HPE_PAUSED_UPGRADE:
-    if (context->message_complete)
-      return PARSE_SUCCESS;
-    return PARSE_INCOMPLETE;
+    return PARSE_PAUSED;
 
   case HPE_USER:
     // User-defined errors (size limits, etc.)
@@ -512,10 +496,7 @@ parse_result_t http_parse_request(http_context_t *context, const char *data, siz
 }
 
 bool http_message_needs_eof(const http_context_t *context) {
-  if (!context)
-    return 0;
-
-  return llhttp_message_needs_eof(context->parser) != 0;
+  return context ? llhttp_message_needs_eof(context->parser) != 0 : false;
 }
 
 parse_result_t http_finish_parsing(http_context_t *context) {
@@ -543,6 +524,8 @@ const char *parse_result_to_string(parse_result_t result) {
     return "PARSE_SUCCESS";
   case PARSE_INCOMPLETE:
     return "PARSE_INCOMPLETE";
+  case PARSE_PAUSED:
+    return "PARSE_PAUSED";
   case PARSE_ERROR:
     return "PARSE_ERROR";
   case PARSE_OVERFLOW:

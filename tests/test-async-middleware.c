@@ -5,7 +5,6 @@
 
 typedef struct {
   Req *req;
-  Res *res;
   Next next;
 } mw_ctx_t;
 
@@ -19,16 +18,16 @@ static void auth_work(void *context) {
   uv_sleep(100);
 }
 
-static void auth_done(void *context) {
+static void auth_done(Res *res, void *context) {
   mw_ctx_t *ctx = context;
 
-  user_ctx_t *user = arena_alloc(ctx->req->arena, sizeof(user_ctx_t));
-  user->user_id = arena_strdup(ctx->req->arena, "user123");
-  user->role = arena_strdup(ctx->req->arena, "admin");
+  user_ctx_t *user = arena_alloc(res->arena, sizeof(user_ctx_t));
+  user->user_id = arena_strdup(res->arena, "user123");
+  user->role = arena_strdup(res->arena, "admin");
 
   set_context(ctx->req, "user", user);
 
-  ctx->next(ctx->req, ctx->res);
+  ctx->next(ctx->req, res);
 }
 
 void middleware_async_auth(Req *req, Res *res, Next next) {
@@ -41,10 +40,9 @@ void middleware_async_auth(Req *req, Res *res, Next next) {
 
   mw_ctx_t *ctx = arena_alloc(req->arena, sizeof(mw_ctx_t));
   ctx->req = req;
-  ctx->res = res;
   ctx->next = next;
 
-  spawn(ctx, auth_work, auth_done);
+  spawn_http(res, ctx, auth_work, auth_done);
 }
 
 void handler_protected(Req *req, Res *res) {

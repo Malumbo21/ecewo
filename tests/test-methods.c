@@ -3,20 +3,14 @@
 #include "tester.h"
 #include <string.h>
 
-void handler_method_echo(Req *req, Res *res) {
-  send_text(res, 200, req->method);
-}
-
-void handler_post_body(Req *req, Res *res) {
-  if (req->body_len == 0) {
-    send_text(res, 400, "No body");
-    return;
-  }
+void handler_body(Req *req, Res *res) {
+  const char *body_str = req->body ? req->body : "0";
 
   char *response = arena_sprintf(req->arena,
-                                 "len=%zu,body=%s",
+                                 "len=%zu, body=%s, method=%s",
                                  req->body_len,
-                                 req->body);
+                                 body_str,
+                                 req->method);
 
   send_text(res, 200, response);
 }
@@ -26,79 +20,81 @@ int test_method_get(void) {
   MockResponse res = request(&params);
 
   ASSERT_EQ(200, res.status_code);
-  ASSERT_EQ_STR("GET", res.body);
+  ASSERT_EQ_STR("len=0, body=0, method=GET", res.body);
 
   free_request(&res);
   RETURN_OK();
 }
 
 int test_method_post(void) {
-  MockParams params = { .method = MOCK_POST, .path = "/method" };
-  MockResponse res = request(&params);
-
-  ASSERT_EQ(200, res.status_code);
-  ASSERT_EQ_STR("POST", res.body);
-
-  free_request(&res);
-  RETURN_OK();
-}
-
-int test_method_put(void) {
-  MockParams params = { .method = MOCK_PUT, .path = "/method" };
-  MockResponse res = request(&params);
-
-  ASSERT_EQ(200, res.status_code);
-  ASSERT_EQ_STR("PUT", res.body);
-
-  free_request(&res);
-  RETURN_OK();
-}
-
-int test_method_delete(void) {
-  MockParams params = { .method = MOCK_DELETE, .path = "/method" };
-  MockResponse res = request(&params);
-
-  ASSERT_EQ(200, res.status_code);
-  ASSERT_EQ_STR("DELETE", res.body);
-
-  free_request(&res);
-  RETURN_OK();
-}
-
-int test_method_patch(void) {
-  MockParams params = { .method = MOCK_PATCH, .path = "/method" };
-  MockResponse res = request(&params);
-
-  ASSERT_EQ(200, res.status_code);
-  ASSERT_EQ_STR("PATCH", res.body);
-
-  free_request(&res);
-  RETURN_OK();
-}
-
-int test_post_with_body(void) {
   MockParams params = {
     .method = MOCK_POST,
-    .path = "/echo-body",
+    .path = "/method",
     .body = "{\"test\":true}"
   };
 
   MockResponse res = request(&params);
 
   ASSERT_EQ(200, res.status_code);
-  ASSERT_EQ_STR("len=13,body={\"test\":true}", res.body);
+  ASSERT_EQ_STR("len=13, body={\"test\":true}, method=POST", res.body);
+
+  free_request(&res);
+  RETURN_OK();
+}
+
+int test_method_put(void) {
+  MockParams params = {
+    .method = MOCK_PUT,
+    .path = "/method",
+    .body = "{\"test\":true}"
+  };
+
+  MockResponse res = request(&params);
+
+  ASSERT_EQ(200, res.status_code);
+  ASSERT_EQ_STR("len=13, body={\"test\":true}, method=PUT", res.body);
+
+  free_request(&res);
+  RETURN_OK();
+}
+
+int test_method_delete(void) {
+  MockParams params = {
+    .method = MOCK_DELETE,
+    .path = "/method"
+  };
+
+  MockResponse res = request(&params);
+
+  ASSERT_EQ(200, res.status_code);
+  ASSERT_EQ_STR("len=0, body=0, method=DELETE", res.body);
+
+  free_request(&res);
+  RETURN_OK();
+}
+
+int test_method_patch(void) {
+  MockParams params = {
+    .method = MOCK_PATCH,
+    .path = "/method",
+    .body = "{\"test\":true}"
+  };
+
+  MockResponse res = request(&params);
+
+  ASSERT_EQ(200, res.status_code);
+  ASSERT_EQ_STR("len=13, body={\"test\":true}, method=PATCH", res.body);
 
   free_request(&res);
   RETURN_OK();
 }
 
 static void setup_routes(void) {
-  get("/method", handler_method_echo);
-  post("/method", handler_method_echo);
-  put("/method", handler_method_echo);
-  del("/method", handler_method_echo);
-  patch("/method", handler_method_echo);
-  post("/echo-body", handler_post_body);
+  get("/method", handler_body);
+  post("/method", handler_body);
+  put("/method", handler_body);
+  del("/method", handler_body);
+  patch("/method", handler_body);
 }
 
 int main(void) {
@@ -108,7 +104,6 @@ int main(void) {
   RUN_TEST(test_method_put);
   RUN_TEST(test_method_delete);
   RUN_TEST(test_method_patch);
-  RUN_TEST(test_post_with_body);
   mock_cleanup();
   return 0;
 }

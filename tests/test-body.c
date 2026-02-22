@@ -8,8 +8,8 @@ void handler_large_body(Req *req, Res *res) {
 }
 
 int test_large_body(void) {
-  // 10KB body
-  size_t size = 10 * 1024;
+  // 2MB body
+  size_t size = 2 * 1024 * 1024;
   char *large_body = malloc(size + 1);
   memset(large_body, 'A', size);
   large_body[size] = '\0';
@@ -21,12 +21,7 @@ int test_large_body(void) {
   };
 
   MockResponse res = request(&params);
-
-  ASSERT_EQ(200, res.status_code);
-
-  char expected[32];
-  snprintf(expected, sizeof(expected), "received=%zu", size);
-  ASSERT_EQ_STR(expected, res.body);
+  ASSERT_EQ(413, res.status_code);
 
   free(large_body);
   free_request(&res);
@@ -36,8 +31,6 @@ int test_large_body(void) {
 // STREAMING
 static int chunks_received = 0;
 static size_t total_bytes = 0;
-
-// TODO: Fix the streaming test
 
 bool on_chunk(Req *req, const char *data, size_t len) {
   (void)req;
@@ -88,6 +81,25 @@ void handler_buffered(Req *req, Res *res) {
   send_text(res, OK, response);
 }
 
+void handler_no_middleware(Req *req, Res *res) {
+  bool result = body_on_data(req, on_chunk);
+  if (!result)
+    send_text(res, BAD_REQUEST, "streaming_disabled");
+  else
+    send_text(res, OK, "streaming_enabled");
+}
+
+int test_no_middleware(void) {  
+  MockParams params = { .method = MOCK_POST, .path = "/no-middleware", .body = "test" };
+  MockResponse res = request(&params);
+  
+  ASSERT_EQ(400, res.status_code);
+  ASSERT_EQ_STR("streaming_disabled", res.body);
+  
+  free_request(&res);
+  RETURN_OK();
+}
+
 int test_streaming_mode(void) {
   MockParams params = {
     .method = MOCK_POST,
@@ -131,14 +143,16 @@ int test_streaming_vs_buffered_isolation(void) {
 
 static void setup_routes(void) {
   post("/large-body", handler_large_body);
-  post("/streaming", handler_streaming);
+  post("/streaming", body_stream, handler_streaming);
   post("/buffered", handler_buffered);
+  post("/no-middleware", handler_no_middleware);
 }
 
 int main(void) {
   mock_init(setup_routes);
 
   RUN_TEST(test_large_body);
+  RUN_TEST(test_no_middleware);
   RUN_TEST(test_streaming_mode);
   RUN_TEST(test_buffered_mode);
   RUN_TEST(test_streaming_vs_buffered_isolation);

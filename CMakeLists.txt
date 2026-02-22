@@ -131,7 +131,7 @@ if(ECEWO_BUILD_TESTS)
   ecewo_plugin(mock)
   
   function(ecewo_test test_name)
-    set(target_name ecewo_test_${test_name})
+    set(target_name ecewo-test-${test_name})
     
     add_executable(${target_name}
       tests/test-${test_name}.c
@@ -160,6 +160,7 @@ if(ECEWO_BUILD_TESTS)
   
   ecewo_test(async-middleware)
   ecewo_test(body)
+  ecewo_test(body-streaming)
   ecewo_test(blocking)
   ecewo_test(concurrent-request)
   ecewo_test(router)

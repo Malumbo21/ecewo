@@ -35,9 +35,16 @@ struct client_s {
   uv_timer_t *request_timeout_timer;
   atomic_int refcount;
   bool valid;
+
+  RequestHandler pending_handler;
+  void *pending_mw;
+  bool handler_pending;
+  Req *pending_req;
+  Res *pending_res;
 };
 
 void resume_client_read(client_t *client);
 void server_on_read(uv_stream_t *stream, ssize_t nread, const uv_buf_t *buf);
 void server_alloc_buffer(uv_handle_t *handle, size_t suggested_size, uv_buf_t *buf);
+
 #endif

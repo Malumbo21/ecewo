@@ -37,7 +37,7 @@ typedef struct {
 
 typedef struct context_t context_t;
 
-typedef struct {
+typedef struct Req {
   Arena *arena;
   uv_tcp_t *client_socket;
   char *method;
@@ -60,7 +60,7 @@ typedef struct {
   const char *value;
 } http_header_t;
 
-typedef struct {
+typedef struct Res {
   Arena *arena;
   uv_tcp_t *client_socket;
   uint16_t status;
@@ -280,38 +280,48 @@ void register_options(const char *path, int mw_count, ...);
 #define options(path, ...) \
   register_options(path, MW(__VA_ARGS__), __VA_ARGS__)
 
-// Get buffered body data (NULL if in streaming mode or no body)
+// Returns req->body, or NULL if streaming mode is active.
 const char *body_bytes(const Req *req);
 
-// Get body length in bytes
+// Returns req->body_len, or 0 if streaming mode is active.
 size_t body_len(const Req *req);
 
-// Data callback - called for each body chunk
-// Return true to continue receiving data, false to pause (backpressure)
+// Called for each chunk of body data.
+// Return true to continue, false to abort.
 typedef bool (*BodyDataCb)(Req *req, const char *data, size_t len);
 
-// End callback - called when all body data has been received
+// Called when the full body has been received.
 typedef void (*BodyEndCb)(Req *req);
 
-// Error callback - called if body processing encounters an error
-typedef void (*BodyErrorCb)(Req *req, const char *error);
+// Called if a body error occurs (size limit exceeded, parse error, etc.)
+typedef void (*BodyErrorCb)(Req *req, const char *reason);
 
-// Enable streaming mode with data callback
-// Must be called BEFORE body data arrives (first line in handler recommended)
-// Once called, body_bytes() will return NULL
-// TODO: Enable the streaming in router fn
-void body_on_data(Req *req, BodyDataCb callback);
+// Place this middleware to enable the body streaming
+// The handler will be called before the body arrives; use body_on_data()
+// and body_on_end() to receive it
+// Without this middleware the body is fully buffered and available via
+// req->body / req->body_len when the handler runs.
+void body_stream(Req *req, Res *res, Next next);
+
+// Register a callback for body chunks.
+// In streaming mode: called as chunks arrive from the network.
+// In buffered mode:  called once synchronously with the full body.
+bool body_on_data(Req *req, BodyDataCb callback);
+
+// Register a callback for end-of-body.
+// In streaming mode: called after the last chunk.
+// In buffered mode:  called immediately if body_on_data already ran.
 void body_on_end(Req *req, BodyEndCb callback);
+
+// Register a callback for body errors.
 void body_on_error(Req *req, BodyErrorCb callback);
 
 void body_pause(Req *req);
 void body_resume(Req *req);
 
-// Requests exceeding the size will trigger the error callback
-// Returns the previous limit for now
-// to allow to temporarily change the limit and restore it later.
-// Need to think about simplifying it with just void return
-size_t body_limit(Req *req, size_t max_bytes); // default max_bytes: 1MB
+// Set the maximum body size in bytes (default: 10MB).
+// Returns the previous limit.
+size_t body_limit(Req *req, size_t max_bytes);
 
 // DEVELOPMENT FUNCTIONS FOR PLUGINS
 bool client_is_valid(void *client_socket_data);
