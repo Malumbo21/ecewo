@@ -63,7 +63,6 @@ typedef struct {
   // When non-NULL, on_body_cb delivers chunks here instead of buffering
   body_chunk_cb_t on_body_chunk;
   void *stream_udata;
-  bool drain_body;
 } http_context_t;
 
 // Used in router.c

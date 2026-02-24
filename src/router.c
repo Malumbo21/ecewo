@@ -254,10 +254,9 @@ static int dispatch(Arena *arena, uv_tcp_t *handle, http_context_t *ctx, client_
 
   // Deny large body if no streaming middleware
   if (!ctx->on_body_chunk && has_body &&
-      (content_length > (long)BUFFERED_BODY_MAX_SIZE || is_chunked)) {
+      (content_length >= (long)BUFFERED_BODY_MAX_SIZE || is_chunked)) {
     set_header(res, "Content-Type", "text/plain");
     res->keep_alive = false;
-    ctx->drain_body = true;
     reply(res, 413, "Payload Too Large", 17);
     return 0;
   }
@@ -332,11 +331,8 @@ int router(client_t *client, const char *request_data, size_t request_len) {
 
     llhttp_resume(ctx->parser);
 
-    if (res && res->replied) {
-      if (ctx->drain_body)
-        return REQUEST_PENDING;
+    if (res && res->replied)
       return res->keep_alive ? REQUEST_KEEP_ALIVE : REQUEST_CLOSE;
-    }
 
     // Handler wants the body, feed remaining bytes now
     if (left > 0)
@@ -347,9 +343,6 @@ int router(client_t *client, const char *request_data, size_t request_len) {
     // Result after resume
     switch (result) {
     case PARSE_SUCCESS:
-      if (ctx->drain_body) {
-        return REQUEST_CLOSE;
-      }
       if (ctx->on_body_chunk && req) {
         body_stream_complete(req);
       } else if (client->handler_pending) {
@@ -422,9 +415,6 @@ int router(client_t *client, const char *request_data, size_t request_len) {
     send_error(NULL, handle, 500);
     return REQUEST_CLOSE;
   }
-
-  if (ctx->drain_body)
-    return REQUEST_CLOSE;
 
   if (http_message_needs_eof(ctx)) {
     if (http_finish_parsing(ctx) != PARSE_SUCCESS) {

@@ -349,9 +349,6 @@ int on_body_cb(llhttp_t *parser, const char *at, size_t length) {
     return HPE_OK;
   }
 
-  if (context->drain_body)
-    return HPE_OK;
-
   #ifndef BUFFERED_BODY_MAX_SIZE
   #define BUFFERED_BODY_MAX_SIZE (1UL  * 1024UL * 1024UL) /* 1MB */
   #endif
@@ -466,7 +463,6 @@ void http_context_init(http_context_t *context,
   // Streaming is off by default
   context->on_body_chunk = NULL;
   context->stream_udata = NULL;
-  context->drain_body = false;
 }
 
 parse_result_t http_parse_request(http_context_t *context, const char *data, size_t len) {
