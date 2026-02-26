@@ -204,6 +204,9 @@ void body_resume(Req *req) {
   if (!ctx || !ctx->client || ctx->client->closing)
     return;
 
+  http_context_t *hctx = &ctx->client->persistent_context;
+  llhttp_resume(hctx->parser);
+
   resume_client_read(ctx->client);
 }
 
