@@ -291,7 +291,7 @@ size_t body_len(const Req *req);
 typedef bool (*BodyDataCb)(Req *req, const char *data, size_t len);
 
 // Called when the full body has been received.
-typedef void (*BodyEndCb)(Req *req);
+typedef void (*BodyEndCb)(Req *req, Res *res);
 
 // Called if a body error occurs (size limit exceeded, parse error, etc.)
 typedef void (*BodyErrorCb)(Req *req, const char *reason);
@@ -311,7 +311,7 @@ bool body_on_data(Req *req, BodyDataCb callback);
 // Register a callback for end-of-body.
 // In streaming mode: called after the last chunk.
 // In buffered mode:  called immediately if body_on_data already ran.
-void body_on_end(Req *req, BodyEndCb callback);
+void body_on_end(Req *req, Res *res, BodyEndCb callback);
 
 // Register a callback for body errors.
 void body_on_error(Req *req, BodyErrorCb callback);

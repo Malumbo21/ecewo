@@ -23,33 +23,30 @@ bool chunk_callback(Req *req, const char *data, size_t len) {
   return true;
 }
 
-void end_callback(Req *req) {
+void end_callback(Req *req, Res *res) {
   StreamContext *ctx = get_context(req, "stream_ctx");
-  Res *res = get_context(req, "res");
-  
-  char *response = arena_sprintf(req->arena, 
+  char *response = arena_sprintf(req->arena,
     "chunks=%d,bytes=%zu,handler_null=%d,chunk_null=%d",
     ctx->chunks_received,
     ctx->total_bytes,
     ctx->body_null_in_handler ? 1 : 0,
     ctx->body_null_during_chunk ? 1 : 0
   );
-  
   send_text(res, OK, response);
 }
 
 void handler_streaming_test(Req *req, Res *res) {
   StreamContext *ctx = arena_alloc(req->arena, sizeof(StreamContext));
   memset(ctx, 0, sizeof(StreamContext));
-  
+
   const char *body_in_handler = body_bytes(req);
   ctx->body_null_in_handler = (body_in_handler == NULL);
-  
+
   set_context(req, "stream_ctx", ctx);
-  set_context(req, "res", res);
-  
+  // set_context(req, "res", res)
+
   body_on_data(req, chunk_callback);
-  body_on_end(req, end_callback);
+  body_on_end(req, res, end_callback);
 }
 
 int test_streaming_mode(void) {

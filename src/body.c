@@ -20,6 +20,7 @@
 
 typedef struct {
   Req *req;
+  Res *res;
   client_t *client;
   BodyDataCb on_data;
   BodyEndCb on_end;
@@ -124,19 +125,20 @@ bool body_on_data(Req *req, BodyDataCb callback) {
   return true;
 }
 
-void body_on_end(Req *req, BodyEndCb callback) {
-  if (!req || !callback)
+void body_on_end(Req *req, Res *res, BodyEndCb callback) {
+  if (!req || !res || !callback)
     return;
 
   StreamCtx *ctx = get_or_create_ctx(req);
   if (!ctx)
     return;
 
+  ctx->res = res;
   ctx->on_end = callback;
 
   // In buffered mode body_on_data already marked completed
   if (ctx->completed)
-    callback(req);
+    callback(req, res);
 }
 
 void body_on_error(Req *req, BodyErrorCb callback) {
@@ -210,16 +212,13 @@ void body_stream_complete(Req *req) {
     return;
 
   StreamCtx *ctx = get_ctx(req);
-  if (!ctx)
-    return;
-
-  if (ctx->completed)
+  if (!ctx || ctx->completed)
     return;
 
   ctx->completed = true;
 
   if (ctx->on_end)
-    ctx->on_end(req);
+    ctx->on_end(req, ctx->res);
 }
 
 // Called by router.c on parse error

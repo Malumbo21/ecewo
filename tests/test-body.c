@@ -66,9 +66,7 @@ bool on_chunk(Req *req, const char *data, size_t len) {
   return true; // Continue receiving
 }
 
-void on_complete(Req *req) {
-  Res *res = get_context(req, "_res");
-  
+void on_complete(Req *req, Res *res) {
   char *response = arena_sprintf(req->arena, 
     "Received %d chunks, total %zu bytes",
     chunks_received, total_bytes);
@@ -82,9 +80,8 @@ void handler_streaming(Req *req, Res *res) {
   chunks_received = 0;
   total_bytes = 0;
   
-  set_context(req, "_res", res);
   body_on_data(req, on_chunk);
-  body_on_end(req, on_complete);
+  body_on_end(req, res, on_complete);
 }
 
 void handler_buffered(Req *req, Res *res) {
