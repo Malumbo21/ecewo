@@ -204,7 +204,7 @@ int on_header_field_cb(llhttp_t *parser, const char *at, size_t length) {
   context->header_field_length = 0;
 
   int result = ensure_buffer_capacity(context->arena, &context->current_header_field,
-                                 &context->header_field_capacity, 0, length);
+                                      &context->header_field_capacity, 0, length);
   if (result == -2) {
     llhttp_set_error_reason(parser, ERROR_REASON_HEADER_TOO_LARGE);
     return HPE_USER;
@@ -236,7 +236,7 @@ int ensure_array_capacity(Arena *arena, request_t *array) {
 
   if (new_capacity > MAX_HEADERS_COUNT)
     new_capacity = MAX_HEADERS_COUNT;
-  
+
   if (new_capacity <= array->capacity)
     return -1;
 
@@ -310,10 +310,10 @@ int on_method_cb(llhttp_t *parser, const char *at, size_t length) {
   }
 
   int result = ensure_buffer_capacity(context->arena,
-                                    &context->method,
-                                    &context->method_capacity,
-                                    context->method_length,
-                                    length);
+                                      &context->method,
+                                      &context->method_capacity,
+                                      context->method_length,
+                                      length);
   if (result == -2) {
     llhttp_set_error_reason(parser, ERROR_REASON_METHOD_TOO_LONG);
     return HPE_USER;
@@ -347,15 +347,15 @@ int on_body_cb(llhttp_t *parser, const char *at, size_t length) {
       return HPE_USER;
     }
     if (result == BODY_CHUNK_PAUSE) {
-        // Backpressure
-        return HPE_PAUSED;
+      // Backpressure
+      return HPE_PAUSED;
     }
     return HPE_OK;
   }
 
-  #ifndef BUFFERED_BODY_MAX_SIZE
-  #define BUFFERED_BODY_MAX_SIZE (1UL  * 1024UL * 1024UL) /* 1MB */
-  #endif
+#ifndef BUFFERED_BODY_MAX_SIZE
+#define BUFFERED_BODY_MAX_SIZE (1UL * 1024UL * 1024UL) /* 1MB */
+#endif
 
   if (context->body_length + length > BUFFERED_BODY_MAX_SIZE) {
     llhttp_set_error_reason(parser, ERROR_REASON_PAYLOAD_TOO_LARGE);

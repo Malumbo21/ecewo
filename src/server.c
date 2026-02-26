@@ -501,24 +501,42 @@ uv_tcp_t *get_client_handle(Res *res) {
 #ifdef ECEWO_DEBUG
 static const char *handle_type_name(uv_handle_type t) {
   switch (t) {
-    case UV_UNKNOWN_HANDLE: return "UNKNOWN";
-    case UV_ASYNC: return "ASYNC";
-    case UV_CHECK: return "CHECK";
-    case UV_FS_EVENT: return "FS_EVENT";
-    case UV_FS_POLL: return "FS_POLL";
-    case UV_HANDLE: return "HANDLE";
-    case UV_IDLE: return "IDLE";
-    case UV_NAMED_PIPE: return "NAMED_PIPE";
-    case UV_POLL: return "POLL";
-    case UV_PREPARE: return "PREPARE";
-    case UV_PROCESS: return "PROCESS";
-    case UV_STREAM: return "STREAM";
-    case UV_TCP: return "TCP";
-    case UV_TIMER: return "TIMER";
-    case UV_TTY: return "TTY";
-    case UV_UDP: return "UDP";
-    case UV_SIGNAL: return "SIGNAL";
-    default: return "OTHER";
+  case UV_UNKNOWN_HANDLE:
+    return "UNKNOWN";
+  case UV_ASYNC:
+    return "ASYNC";
+  case UV_CHECK:
+    return "CHECK";
+  case UV_FS_EVENT:
+    return "FS_EVENT";
+  case UV_FS_POLL:
+    return "FS_POLL";
+  case UV_HANDLE:
+    return "HANDLE";
+  case UV_IDLE:
+    return "IDLE";
+  case UV_NAMED_PIPE:
+    return "NAMED_PIPE";
+  case UV_POLL:
+    return "POLL";
+  case UV_PREPARE:
+    return "PREPARE";
+  case UV_PROCESS:
+    return "PROCESS";
+  case UV_STREAM:
+    return "STREAM";
+  case UV_TCP:
+    return "TCP";
+  case UV_TIMER:
+    return "TIMER";
+  case UV_TTY:
+    return "TTY";
+  case UV_UDP:
+    return "UDP";
+  case UV_SIGNAL:
+    return "SIGNAL";
+  default:
+    return "OTHER";
   }
 }
 
@@ -532,7 +550,7 @@ static void inspect_handle_cb(uv_handle_t *handle, void *arg) {
 }
 
 static void inspect_loop(uv_loop_t *loop) {
-  fprintf(stderr, "Inspecting loop %p\n", (void*)loop);
+  fprintf(stderr, "Inspecting loop %p\n", (void *)loop);
   uv_walk(loop, inspect_handle_cb, NULL);
 }
 #endif
@@ -895,7 +913,8 @@ static void on_connection(uv_stream_t *server, int status) {
 
     if (uv_read_start((uv_stream_t *)&client->handle,
                       server_alloc_buffer,
-                      server_on_read) == 0) {
+                      server_on_read)
+        == 0) {
       add_client_to_list(client);
       ecewo_server.active_connections++;
     } else {

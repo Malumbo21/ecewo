@@ -150,8 +150,7 @@ static void noop_route_handler(Req *req, Res *res) {
 // Matches a route and invokes the handler/middleware chain.
 // Returns 0 on success, -1 if a fatal error occurred (500 already sent).
 // req_out / res_out are set on success so the caller can inspect res->replied.
-static int dispatch(Arena *arena, uv_tcp_t *handle, http_context_t *ctx, client_t *client,
-                    const char *path, size_t path_len, Req **req_out, Res **res_out) {
+static int dispatch(Arena *arena, uv_tcp_t *handle, http_context_t *ctx, client_t *client, const char *path, size_t path_len, Req **req_out, Res **res_out) {
   Req *req = create_req(arena, handle);
   Res *res = create_res(arena, handle);
   if (!req || !res) {
@@ -251,13 +250,12 @@ static int dispatch(Arena *arena, uv_tcp_t *handle, http_context_t *ctx, client_
     }
   }
 
-  #ifndef BUFFERED_BODY_MAX_SIZE
-  #define BUFFERED_BODY_MAX_SIZE (1UL  * 1024UL * 1024UL) /* 1MB */
-  #endif
+#ifndef BUFFERED_BODY_MAX_SIZE
+#define BUFFERED_BODY_MAX_SIZE (1UL * 1024UL * 1024UL) /* 1MB */
+#endif
 
   // Deny large body if no streaming middleware
-  if (!ctx->on_body_chunk && has_body &&
-      (content_length >= (long)BUFFERED_BODY_MAX_SIZE || is_chunked)) {
+  if (!ctx->on_body_chunk && has_body && (content_length >= (long)BUFFERED_BODY_MAX_SIZE || is_chunked)) {
     set_header(res, "Content-Type", "text/plain");
     res->keep_alive = false;
     reply(res, 413, "Payload Too Large", 17);
@@ -267,16 +265,16 @@ static int dispatch(Arena *arena, uv_tcp_t *handle, http_context_t *ctx, client_
   if (!has_stream_middleware && has_body && !ctx->message_complete) {
     if (client) {
       client->pending_handler = match.handler;
-      client->pending_mw      = (void *)mw;
-      client->pending_req     = req;
-      client->pending_res     = res;
+      client->pending_mw = (void *)mw;
+      client->pending_req = req;
+      client->pending_res = res;
       client->handler_pending = true;
     }
     return 0;
   }
 
   if (!has_stream_middleware && ctx->body_length > 0) {
-    req->body     = ctx->body;
+    req->body = ctx->body;
     req->body_len = ctx->body_length;
   }
 
@@ -353,7 +351,7 @@ int router(client_t *client, const char *request_data, size_t request_len) {
         Req *preq = client->pending_req;
         Res *pres = client->pending_res;
         if (preq && pres) {
-          preq->body     = ctx->body_length > 0 ? ctx->body : NULL;
+          preq->body = ctx->body_length > 0 ? ctx->body : NULL;
           preq->body_len = ctx->body_length;
           MiddlewareInfo *pmw = (MiddlewareInfo *)client->pending_mw;
           if (pmw)
@@ -364,8 +362,8 @@ int router(client_t *client, const char *request_data, size_t request_len) {
       }
       {
         Res *final_res = (client->pending_res && client->pending_res->replied)
-                         ? client->pending_res
-                         : res;
+            ? client->pending_res
+            : res;
         if (final_res && !final_res->replied)
           return REQUEST_PENDING;
         return final_res && final_res->keep_alive ? REQUEST_KEEP_ALIVE : REQUEST_CLOSE;

@@ -15,7 +15,7 @@
 #endif
 
 #ifndef BODY_MAX_SIZE
-#define BODY_MAX_SIZE (10UL * 1024UL * 1024UL)  /* 10MB */
+#define BODY_MAX_SIZE (10UL * 1024UL * 1024UL) /* 10MB */
 #endif
 
 typedef struct {
@@ -79,8 +79,8 @@ static int stream_on_chunk(void *udata, const char *data, size_t len) {
   if (ctx->on_data) {
     bool cont = ctx->on_data(ctx->req, data, len);
     if (!cont) {
-        body_pause(ctx->req);
-        return BODY_CHUNK_PAUSE;
+      body_pause(ctx->req);
+      return BODY_CHUNK_PAUSE;
     }
   }
 
