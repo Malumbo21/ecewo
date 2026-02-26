@@ -4,6 +4,10 @@
 #include "ecewo.h"
 #include "llhttp.h"
 
+#ifndef BUFFERED_BODY_MAX_SIZE
+#define BUFFERED_BODY_MAX_SIZE (1UL * 1024UL * 1024UL) /* 1MB */
+#endif
+
 typedef enum {
   PARSE_SUCCESS = 0, // Fully parsed
   PARSE_INCOMPLETE = 1, // Need more data

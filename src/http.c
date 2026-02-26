@@ -353,10 +353,6 @@ int on_body_cb(llhttp_t *parser, const char *at, size_t length) {
     return HPE_OK;
   }
 
-#ifndef BUFFERED_BODY_MAX_SIZE
-#define BUFFERED_BODY_MAX_SIZE (1UL * 1024UL * 1024UL) /* 1MB */
-#endif
-
   if (context->body_length + length > BUFFERED_BODY_MAX_SIZE) {
     llhttp_set_error_reason(parser, ERROR_REASON_PAYLOAD_TOO_LARGE);
     return HPE_USER;

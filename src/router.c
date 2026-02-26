@@ -250,10 +250,6 @@ static int dispatch(Arena *arena, uv_tcp_t *handle, http_context_t *ctx, client_
     }
   }
 
-#ifndef BUFFERED_BODY_MAX_SIZE
-#define BUFFERED_BODY_MAX_SIZE (1UL * 1024UL * 1024UL) /* 1MB */
-#endif
-
   // Deny large body if no streaming middleware
   if (!ctx->on_body_chunk && has_body && (content_length >= (long)BUFFERED_BODY_MAX_SIZE || is_chunked)) {
     set_header(res, "Content-Type", "text/plain");
