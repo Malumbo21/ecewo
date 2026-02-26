@@ -10,6 +10,12 @@ typedef struct {
   bool body_null_during_chunk;
 } StreamContext;
 
+typedef struct {
+  bool error_called;
+  char error_reason[256];
+} ErrorContext;
+
+
 bool chunk_callback(Req *req, const char *data, size_t len) {
   StreamContext *ctx = get_context(req, "stream_ctx");
   ctx->chunks_received++;
@@ -35,6 +41,14 @@ void end_callback(Req *req, Res *res) {
   send_text(res, OK, response);
 }
 
+void error_callback(Req *req, Res *res, const char *reason) {
+  ErrorContext *ctx = get_context(req, "error_ctx");
+  ctx->error_called = true;
+  strncpy(ctx->error_reason, reason, sizeof(ctx->error_reason) - 1);
+  send_text(res, PAYLOAD_TOO_LARGE, reason);
+}
+
+
 void handler_streaming_test(Req *req, Res *res) {
   StreamContext *ctx = arena_alloc(req->arena, sizeof(StreamContext));
   memset(ctx, 0, sizeof(StreamContext));
@@ -43,7 +57,6 @@ void handler_streaming_test(Req *req, Res *res) {
   ctx->body_null_in_handler = (body_in_handler == NULL);
 
   set_context(req, "stream_ctx", ctx);
-  // set_context(req, "res", res)
 
   body_on_data(req, chunk_callback);
   body_on_end(req, res, end_callback);
@@ -67,6 +80,7 @@ int test_streaming_mode(void) {
   free_request(&res);
   RETURN_OK();
 }
+
 
 void handler_buffered(Req *req, Res *res) {
   const char *body = body_bytes(req);
@@ -94,6 +108,7 @@ int test_buffered_mode(void) {
   free_request(&res);
   RETURN_OK();
 }
+
 
 void handler_true_buffered(Req *req, Res *res) {
   const char *body = body_bytes(req);
@@ -123,10 +138,65 @@ int test_true_buffered_mode(void) {
   RETURN_OK();
 }
 
+
+void handler_size_limit(Req *req, Res *res) {
+  ErrorContext *ctx = arena_alloc(req->arena, sizeof(ErrorContext));
+  memset(ctx, 0, sizeof(ErrorContext));
+  set_context(req, "error_ctx", ctx);
+
+  body_limit(req, 10);
+  body_on_data(req, chunk_callback);
+  body_on_end(req, res, end_callback);
+  body_on_error(req, res, error_callback);
+}
+
+int test_size_limit(void) {
+  MockParams params = {
+    .method = MOCK_POST,
+    .path = "/size-limit",
+    .body = "This body is definitely longer than 10 bytes"
+  };
+
+  MockResponse res = request(&params);
+
+  ASSERT_EQ(413, res.status_code);
+  ASSERT_TRUE(strstr(res.body, "Body exceeds size limit") != NULL);
+
+  free_request(&res);
+  RETURN_OK();
+}
+
+void handler_no_middleware(Req *req, Res *res) {
+  bool result = body_on_data(req, chunk_callback);
+  if (!result)
+    send_text(res, BAD_REQUEST, "streaming disabled");
+  else
+    send_text(res, OK, "streaming enabled");
+}
+
+int test_no_middleware(void) {  
+  MockParams params = {
+    .method = MOCK_POST,
+    .path = "/no-middleware",
+    .body = "test"
+  };
+
+  MockResponse res = request(&params);
+  
+  ASSERT_EQ(400, res.status_code);
+  ASSERT_EQ_STR("streaming disabled", res.body);
+  
+  free_request(&res);
+  RETURN_OK();
+}
+
+
 static void setup_routes(void) {
   post("/streaming", body_stream, handler_streaming_test);
   post("/buffered", handler_buffered);
   get("/true-buffered", handler_true_buffered);
+  post("/size-limit", body_stream, handler_size_limit);
+  post("/no-middleware", handler_no_middleware);
 }
 
 int main(void) {
@@ -135,6 +205,8 @@ int main(void) {
   RUN_TEST(test_streaming_mode);
   RUN_TEST(test_buffered_mode);
   RUN_TEST(test_true_buffered_mode);
+  RUN_TEST(test_size_limit);
+  RUN_TEST(test_no_middleware);
   
   mock_cleanup();
   return 0;
