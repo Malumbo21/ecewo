@@ -159,7 +159,7 @@ if(ECEWO_BUILD_TESTS)
   endfunction()
   
   ecewo_test(async-middleware)
-  ecewo_test(body)
+  ecewo_test(body-buffering)
   ecewo_test(body-streaming)
   ecewo_test(blocking)
   ecewo_test(concurrent-request)

@@ -150,12 +150,13 @@ void send_error(Arena *arena, uv_tcp_t *client_socket, int error_code) {
   if (res < 0) {
     LOG_ERROR("Write error: %s", uv_strerror(res));
     free(response);
-    free(write_req);
 
     if (write_req->client) {
-      end_request(write_req->client);
-      client_unref(write_req->client);
+        end_request(write_req->client);
+        client_unref(write_req->client);
     }
+
+    free(write_req);
   }
 
   if (arena)

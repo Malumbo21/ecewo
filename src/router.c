@@ -7,7 +7,7 @@
 #include "request.h"
 #include "body.h"
 #include "logger.h"
-#include <stdlib.h> // for atol
+#include <stdlib.h> // for strtol
 
 extern void send_error(Arena *request_arena, uv_tcp_t *client_socket, int error_code);
 
@@ -239,7 +239,10 @@ static int dispatch(Arena *arena, uv_tcp_t *handle, http_context_t *ctx, client_
 
     if (strcasecmp(k, "Content-Length") == 0 && strcmp(v, "0") != 0) {
       has_body = true;
-      content_length = atol(v);
+      char *endptr;
+      content_length = strtol(v, &endptr, 10);
+      if (endptr == v || *endptr != '\0')
+        content_length = 0;
     }
 
     if (strcasecmp(k, "Transfer-Encoding") == 0) {
