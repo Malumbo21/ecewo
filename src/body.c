@@ -70,7 +70,7 @@ static int stream_on_chunk(void *udata, const char *data, size_t len) {
   if (ctx->max_size > 0 && ctx->bytes_received + len > ctx->max_size) {
     ctx->errored = true;
     if (ctx->on_error)
-      ctx->on_error(ctx->req, "Body exceeds size limit");
+      ctx->on_error(ctx->req, ctx->res, "Body exceeds size limit");
     return -1;
   }
 
@@ -141,14 +141,15 @@ void body_on_end(Req *req, Res *res, BodyEndCb callback) {
     callback(req, res);
 }
 
-void body_on_error(Req *req, BodyErrorCb callback) {
-  if (!req || !callback)
+void body_on_error(Req *req, Res *res, BodyErrorCb callback) {
+  if (!req || !res || !callback)
     return;
 
   StreamCtx *ctx = get_or_create_ctx(req);
   if (!ctx)
     return;
 
+  ctx->res = res;
   ctx->on_error = callback;
 }
 
@@ -236,5 +237,5 @@ void body_stream_error(Req *req, const char *reason) {
   ctx->errored = true;
 
   if (ctx->on_error)
-    ctx->on_error(req, reason ? reason : "unknown error");
+    ctx->on_error(req, ctx->res, reason ? reason : "unknown error");
 }
