@@ -346,6 +346,10 @@ int on_body_cb(llhttp_t *parser, const char *at, size_t length) {
       llhttp_set_error_reason(parser, ERROR_REASON_PAYLOAD_TOO_LARGE);
       return HPE_USER;
     }
+    if (result == BODY_CHUNK_PAUSE) {
+        // Backpressure
+        return HPE_PAUSED;
+    }
     return HPE_OK;
   }
 

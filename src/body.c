@@ -65,24 +65,26 @@ static StreamCtx *get_or_create_ctx(Req *req) {
 static int stream_on_chunk(void *udata, const char *data, size_t len) {
   StreamCtx *ctx = (StreamCtx *)udata;
   if (!ctx || !data || len == 0)
-    return 0;
+    return BODY_CHUNK_CONTINUE;
 
   if (ctx->max_size > 0 && ctx->bytes_received + len > ctx->max_size) {
     ctx->errored = true;
     if (ctx->on_error)
       ctx->on_error(ctx->req, ctx->res, "Body exceeds size limit");
-    return -1;
+    return BODY_CHUNK_ERROR;
   }
 
   ctx->bytes_received += len;
 
   if (ctx->on_data) {
     bool cont = ctx->on_data(ctx->req, data, len);
-    if (!cont)
-      return -1;
+    if (!cont) {
+        body_pause(ctx->req);
+        return BODY_CHUNK_PAUSE;
+    }
   }
 
-  return 0;
+  return BODY_CHUNK_CONTINUE;
 }
 
 void body_stream(Req *req, Res *res, Next next) {

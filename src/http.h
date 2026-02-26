@@ -12,6 +12,12 @@ typedef enum {
   PARSE_OVERFLOW = -2 // Size limit exceeded
 } parse_result_t;
 
+typedef enum {
+  BODY_CHUNK_CONTINUE = 0,
+  BODY_CHUNK_PAUSE = 1,
+  BODY_CHUNK_ERROR = -1
+} body_chunk_result_t;
+
 // Called by on_body_cb when a chunk arrives in streaming mode.
 // Return  0 = continue
 // Return -1 = abort (size limit, etc.)
