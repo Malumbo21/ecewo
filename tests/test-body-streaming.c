@@ -11,7 +11,7 @@ typedef struct {
 } StreamContext;
 
 
-bool chunk_callback(Req *req, const char *data, size_t len) {
+void chunk_callback(Req *req, const char *data, size_t len) {
   StreamContext *ctx = get_context(req, "stream_ctx");
   ctx->chunks_received++;
   ctx->total_bytes += len;
@@ -20,8 +20,6 @@ bool chunk_callback(Req *req, const char *data, size_t len) {
     const char *body = body_bytes(req);
     ctx->body_null_during_chunk = (body == NULL);
   }
-  
-  return true;
 }
 
 void end_callback(Req *req, Res *res) {
@@ -148,37 +146,12 @@ int test_size_limit(void) {
   RETURN_OK();
 }
 
-void handler_no_middleware(Req *req, Res *res) {
-  bool result = body_on_data(req, chunk_callback);
-  if (!result)
-    send_text(res, BAD_REQUEST, "streaming disabled");
-  else
-    send_text(res, OK, "streaming enabled");
-}
-
-int test_no_middleware(void) {  
-  MockParams params = {
-    .method = MOCK_POST,
-    .path = "/no-middleware",
-    .body = "test"
-  };
-
-  MockResponse res = request(&params);
-  
-  ASSERT_EQ(400, res.status_code);
-  ASSERT_EQ_STR("streaming disabled", res.body);
-  
-  free_request(&res);
-  RETURN_OK();
-}
-
 
 static void setup_routes(void) {
   post("/streaming", body_stream, handler_streaming_test);
   post("/buffered", handler_buffered);
   get("/true-buffered", handler_true_buffered);
   post("/size-limit", body_stream, handler_size_limit);
-  post("/no-middleware", handler_no_middleware);
 }
 
 int main(void) {
@@ -188,7 +161,6 @@ int main(void) {
   RUN_TEST(test_buffered_mode);
   RUN_TEST(test_true_buffered_mode);
   RUN_TEST(test_size_limit);
-  RUN_TEST(test_no_middleware);
   
   mock_cleanup();
   return 0;

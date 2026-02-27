@@ -18,7 +18,6 @@ typedef enum {
 
 typedef enum {
   BODY_CHUNK_CONTINUE = 0,
-  BODY_CHUNK_PAUSE = 1,
   BODY_CHUNK_ERROR = -1
 } body_chunk_result_t;
 

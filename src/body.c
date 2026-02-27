@@ -71,13 +71,8 @@ static int stream_on_chunk(void *udata, const char *data, size_t len) {
 
   ctx->bytes_received += len;
 
-  if (ctx->on_data) {
-    bool cont = ctx->on_data(ctx->req, data, len);
-    if (!cont) {
-      body_pause(ctx->req);
-      return BODY_CHUNK_PAUSE;
-    }
-  }
+  if (ctx->on_data)
+    ctx->on_data(ctx->req, data, len);
 
   return BODY_CHUNK_CONTINUE;
 }
@@ -105,21 +100,20 @@ void body_stream(Req *req, Res *res, Next next) {
   next(req, res);
 }
 
-bool body_on_data(Req *req, BodyDataCb callback) {
+void body_on_data(Req *req, BodyDataCb callback) {
   if (!req || !callback)
-    return false;
+    return;
 
   StreamCtx *ctx = get_or_create_ctx(req);
   if (!ctx)
-    return false;
+    return;
 
   if (!ctx->streaming_enabled) {
     LOG_ERROR("body_on_data requires body_stream middleware");
-    return false;
+    return;
   }
 
   ctx->on_data = callback;
-  return true;
 }
 
 void body_on_end(Req *req, Res *res, BodyEndCb callback) {
@@ -167,32 +161,6 @@ size_t body_len(const Req *req) {
   if (ctx && ctx->streaming_enabled)
     return 0;
   return req->body_len;
-}
-
-void body_pause(Req *req) {
-  if (!req)
-    return;
-
-  StreamCtx *ctx = get_ctx(req);
-  if (!ctx || !ctx->client)
-    return;
-
-  if (req->client_socket && !uv_is_closing((uv_handle_t *)req->client_socket))
-    uv_read_stop((uv_stream_t *)req->client_socket);
-}
-
-void body_resume(Req *req) {
-  if (!req)
-    return;
-
-  StreamCtx *ctx = get_ctx(req);
-  if (!ctx || !ctx->client || ctx->client->closing)
-    return;
-
-  http_context_t *hctx = &ctx->client->persistent_context;
-  llhttp_resume(hctx->parser);
-
-  resume_client_read(ctx->client);
 }
 
 // Called by router.c after full message received in streaming mode

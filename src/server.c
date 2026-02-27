@@ -844,24 +844,6 @@ void server_on_read(uv_stream_t *stream, ssize_t nread, const uv_buf_t *buf) {
   }
 }
 
-// Resume reading after backpressure pause (called from body.c)
-void resume_client_read(client_t *client) {
-  if (!client || client->closing)
-    return;
-
-  if (uv_is_closing((uv_handle_t *)&client->handle))
-    return;
-
-  int result = uv_read_start((uv_stream_t *)&client->handle,
-                             server_alloc_buffer,
-                             server_on_read);
-  if (result != 0) {
-    LOG_ERROR("Failed to resume read: %s", uv_strerror(result));
-  } else {
-    LOG_DEBUG("Client read resumed successfully");
-  }
-}
-
 static void on_connection(uv_stream_t *server, int status) {
   (void)server;
 

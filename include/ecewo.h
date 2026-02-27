@@ -287,8 +287,7 @@ const char *body_bytes(const Req *req);
 size_t body_len(const Req *req);
 
 // Called for each chunk of body data.
-// Return true to continue, false to abort.
-typedef bool (*BodyDataCb)(Req *req, const char *data, size_t len);
+typedef void (*BodyDataCb)(Req *req, const char *data, size_t len);
 
 // Called when the full body has been received.
 typedef void (*BodyEndCb)(Req *req, Res *res);
@@ -303,15 +302,12 @@ void body_stream(Req *req, Res *res, Next next);
 // Register a callback for body chunks.
 // In streaming mode: called as chunks arrive from the network.
 // In buffered mode:  called once synchronously with the full body.
-bool body_on_data(Req *req, BodyDataCb callback);
+void body_on_data(Req *req, BodyDataCb callback);
 
 // Register a callback for end-of-body.
 // In streaming mode: called after the last chunk.
 // In buffered mode:  called immediately if body_on_data already ran.
 void body_on_end(Req *req, Res *res, BodyEndCb callback);
-
-void body_pause(Req *req);
-void body_resume(Req *req);
 
 // Set the maximum body size in bytes (default: 10MB).
 // Returns the previous limit.
