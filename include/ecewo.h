@@ -280,12 +280,6 @@ void register_options(const char *path, int mw_count, ...);
 #define options(path, ...) \
   register_options(path, MW(__VA_ARGS__), __VA_ARGS__)
 
-// Returns req->body, or NULL if streaming mode is active.
-const char *body_bytes(const Req *req);
-
-// Returns req->body_len, or 0 if streaming mode is active.
-size_t body_len(const Req *req);
-
 // Called for each chunk of body data.
 typedef void (*BodyDataCb)(Req *req, const char *data, size_t len);
 

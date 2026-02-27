@@ -145,24 +145,6 @@ size_t body_limit(Req *req, size_t max_size) {
   return prev;
 }
 
-const char *body_bytes(const Req *req) {
-  if (!req)
-    return NULL;
-  StreamCtx *ctx = get_ctx((Req *)req);
-  if (ctx && ctx->streaming_enabled)
-    return NULL;
-  return req->body;
-}
-
-size_t body_len(const Req *req) {
-  if (!req)
-    return 0;
-  StreamCtx *ctx = get_ctx((Req *)req);
-  if (ctx && ctx->streaming_enabled)
-    return 0;
-  return req->body_len;
-}
-
 // Called by router.c after full message received in streaming mode
 void body_stream_complete(Req *req) {
   if (!req)
