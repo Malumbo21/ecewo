@@ -66,8 +66,12 @@ static int stream_on_chunk(void *udata, const char *data, size_t len) {
   if (!ctx || !data || len == 0)
     return BODY_CHUNK_CONTINUE;
 
-  if (ctx->max_size > 0 && ctx->bytes_received + len > ctx->max_size)
+  if (ctx->max_size > 0 && ctx->bytes_received + len > ctx->max_size) {
+    LOG_ERROR("Body size limit exceeded: received %zu, limit %zu. Use body_limit() to increase the limit.",
+              ctx->bytes_received + len, ctx->max_size);
+
     return BODY_CHUNK_ERROR;
+  }
 
   ctx->bytes_received += len;
 

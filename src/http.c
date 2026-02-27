@@ -352,6 +352,8 @@ int on_body_cb(llhttp_t *parser, const char *at, size_t length) {
   }
 
   if (context->body_length + length > BUFFERED_BODY_MAX_SIZE) {
+    LOG_ERROR("Buffered body size limit exceeded: received %zu, limit %zu. Set BUFFERED_BODY_MAX_SIZE to increase the limit.",
+              context->body_length + length, (size_t)BUFFERED_BODY_MAX_SIZE);
     llhttp_set_error_reason(parser, ERROR_REASON_PAYLOAD_TOO_LARGE);
     return HPE_USER;
   }
