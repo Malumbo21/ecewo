@@ -24,7 +24,6 @@ typedef struct {
   client_t *client;
   BodyDataCb on_data;
   BodyEndCb on_end;
-  BodyErrorCb on_error;
   size_t max_size;
   size_t bytes_received;
   bool streaming_enabled;
@@ -67,12 +66,8 @@ static int stream_on_chunk(void *udata, const char *data, size_t len) {
   if (!ctx || !data || len == 0)
     return BODY_CHUNK_CONTINUE;
 
-  if (ctx->max_size > 0 && ctx->bytes_received + len > ctx->max_size) {
-    ctx->errored = true;
-    if (ctx->on_error)
-      ctx->on_error(ctx->req, ctx->res, "Body exceeds size limit");
+  if (ctx->max_size > 0 && ctx->bytes_received + len > ctx->max_size)
     return BODY_CHUNK_ERROR;
-  }
 
   ctx->bytes_received += len;
 
@@ -141,18 +136,6 @@ void body_on_end(Req *req, Res *res, BodyEndCb callback) {
   // In buffered mode body_on_data already marked completed
   if (ctx->completed)
     callback(req, res);
-}
-
-void body_on_error(Req *req, Res *res, BodyErrorCb callback) {
-  if (!req || !res || !callback)
-    return;
-
-  StreamCtx *ctx = get_or_create_ctx(req);
-  if (!ctx)
-    return;
-
-  ctx->res = res;
-  ctx->on_error = callback;
 }
 
 size_t body_limit(Req *req, size_t max_size) {
@@ -225,22 +208,4 @@ void body_stream_complete(Req *req) {
 
   if (ctx->on_end)
     ctx->on_end(req, ctx->res);
-}
-
-// Called by router.c on parse error
-void body_stream_error(Req *req, const char *reason) {
-  if (!req)
-    return;
-
-  StreamCtx *ctx = get_ctx(req);
-  if (!ctx)
-    return;
-
-  if (ctx->errored)
-    return;
-
-  ctx->errored = true;
-
-  if (ctx->on_error)
-    ctx->on_error(req, ctx->res, reason ? reason : "unknown error");
 }

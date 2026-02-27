@@ -10,11 +10,6 @@ typedef struct {
   bool body_null_during_chunk;
 } StreamContext;
 
-typedef struct {
-  bool error_called;
-  char error_reason[256];
-} ErrorContext;
-
 
 bool chunk_callback(Req *req, const char *data, size_t len) {
   StreamContext *ctx = get_context(req, "stream_ctx");
@@ -39,13 +34,6 @@ void end_callback(Req *req, Res *res) {
     ctx->body_null_during_chunk ? 1 : 0
   );
   send_text(res, OK, response);
-}
-
-void error_callback(Req *req, Res *res, const char *reason) {
-  ErrorContext *ctx = get_context(req, "error_ctx");
-  ctx->error_called = true;
-  strncpy(ctx->error_reason, reason, sizeof(ctx->error_reason) - 1);
-  send_text(res, PAYLOAD_TOO_LARGE, reason);
 }
 
 
@@ -140,14 +128,9 @@ int test_true_buffered_mode(void) {
 
 
 void handler_size_limit(Req *req, Res *res) {
-  ErrorContext *ctx = arena_alloc(req->arena, sizeof(ErrorContext));
-  memset(ctx, 0, sizeof(ErrorContext));
-  set_context(req, "error_ctx", ctx);
-
   body_limit(req, 10);
   body_on_data(req, chunk_callback);
   body_on_end(req, res, end_callback);
-  body_on_error(req, res, error_callback);
 }
 
 int test_size_limit(void) {
@@ -160,7 +143,6 @@ int test_size_limit(void) {
   MockResponse res = request(&params);
 
   ASSERT_EQ(413, res.status_code);
-  ASSERT_TRUE(strstr(res.body, "Body exceeds size limit") != NULL);
 
   free_request(&res);
   RETURN_OK();
