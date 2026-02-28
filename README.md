@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="https://raw.githubusercontent.com/savashn/ecewo/main/.github/assets/ecewo.svg" />
+  <img src="https://raw.githubusercontent.com/savashn/ecewo/main/img/ecewo.svg" />
   <h1>Express-C Effect for Web Operations</h1>
   A web framework for C — inspired by <a href="https://expressjs.com">express.js</a>
 </div>
