@@ -4,7 +4,6 @@
 #include "arena.h"
 #include "server.h"
 #include "logger.h"
-#include "body.h"
 #include <stdlib.h>
 #include <string.h>
 

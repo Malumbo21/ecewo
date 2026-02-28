@@ -5,11 +5,11 @@
 #include "arena.h"
 #include "utils.h"
 #include "request.h"
-#include "body.h"
 #include "logger.h"
 #include <stdlib.h> // for strtol
 
 extern void send_error(Arena *request_arena, uv_tcp_t *client_socket, int error_code);
+extern void body_stream_complete(Req *req);
 
 // Extracts URL parameters from a previously matched route
 // Example: From route /users/:id matched with /users/123, extracts parameter id=123

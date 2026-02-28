@@ -451,12 +451,9 @@ void server_shutdown(void) {
   if (ecewo_server.server && !uv_is_closing((uv_handle_t *)ecewo_server.server))
     uv_close((uv_handle_t *)ecewo_server.server, on_server_closed);
 
-  // If we are currently inside the event loop dispatching a request, running a
-  // nested uv_run() here would fire on_client_closed() for the connection that
-  // is still mid-dispatch inside uv__stream_io(), freeing the embedded uv_tcp_t
-  // handle while libuv still holds a live pointer to it — heap-use-after-free.
-  // Instead, just stop the loop; server_cleanup() will call
-  // server_shutdown_cleanup() once we are safely outside the event loop.
+  // If a request is currently being processed, we must avoid running the event loop again.
+  // Doing so could close a connection that's still in use, leading to memory errors.
+  // Instead, just stop the loop; server_cleanup() will safely finish shutdown afterwards.
   if (ecewo_server.dispatching) {
     uv_stop(ecewo_server.loop);
     return;
