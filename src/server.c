@@ -147,8 +147,6 @@ static void close_client(client_t *client) {
   if (!client || client->closing)
     return;
 
-  bool need_unref = (client->request_timeout_timer != NULL);
-
   if (client->request_timeout_timer) {
     uv_timer_stop(client->request_timeout_timer);
     uv_close((uv_handle_t *)client->request_timeout_timer, (uv_close_cb)free);
@@ -162,9 +160,6 @@ static void close_client(client_t *client) {
 
   if (!uv_is_closing((uv_handle_t *)&client->handle))
     uv_close((uv_handle_t *)&client->handle, on_client_closed);
-
-  if (need_unref)
-    client_unref(client);
 }
 
 static void cleanup_idle_connections(uv_timer_t *handle) {
@@ -709,22 +704,17 @@ static void on_request_timeout(uv_timer_t *handle) {
 
     client->request_timeout_timer = NULL;
     close_client(client);
-    client_unref(client);
   }
 
   uv_timer_stop(handle);
   uv_close((uv_handle_t *)handle, (uv_close_cb)free);
 }
 
-static bool stop_request_timer(client_t *client) {
+static void stop_request_timer(client_t *client) {
   if (!client || !client->request_timeout_timer)
-    return false;
+    return;
 
   uv_timer_stop(client->request_timeout_timer);
-  uv_close((uv_handle_t *)client->request_timeout_timer, (uv_close_cb)free);
-  client->request_timeout_timer = NULL;
-
-  return true;
 }
 
 int request_timeout(Res *res, uint64_t timeout_ms) {
@@ -754,7 +744,6 @@ int request_timeout(Res *res, uint64_t timeout_ms) {
   }
 
   client->request_timeout_timer->data = client;
-  client_ref(client);
 
   if (uv_timer_start(client->request_timeout_timer,
                      on_request_timeout,
@@ -763,7 +752,6 @@ int request_timeout(Res *res, uint64_t timeout_ms) {
       != 0) {
     uv_timer_t *timer = client->request_timeout_timer;
     client->request_timeout_timer = NULL;
-    client_unref(client);
     uv_close((uv_handle_t *)timer, (uv_close_cb)free);
     return -1;
   }
@@ -819,19 +807,19 @@ void server_on_read(uv_stream_t *stream, ssize_t nread, const uv_buf_t *buf) {
     client->request_in_progress = true;
 
 #if REQUEST_TIMEOUT_MS > 0
-    if (!client->request_timeout_timer) {
+    if (client->request_timeout_timer) {
+      uv_timer_start(client->request_timeout_timer, on_request_timeout, REQUEST_TIMEOUT_MS, 0);
+    } else {
       client->request_timeout_timer = malloc(sizeof(uv_timer_t));
       if (client->request_timeout_timer) {
         if (uv_timer_init(ecewo_server.loop, client->request_timeout_timer) == 0) {
           client->request_timeout_timer->data = client;
-          client_ref(client);
 
           if (uv_timer_start(client->request_timeout_timer,
                              on_request_timeout,
                              REQUEST_TIMEOUT_MS,
                              0)
               != 0) {
-            client_unref(client);
             uv_close((uv_handle_t *)client->request_timeout_timer, (uv_close_cb)free);
             client->request_timeout_timer = NULL;
           }
@@ -851,14 +839,11 @@ void server_on_read(uv_stream_t *stream, ssize_t nread, const uv_buf_t *buf) {
     int result = router(client, buf->base, (size_t)nread);
 
     switch (result) {
-    case REQUEST_KEEP_ALIVE: {
+    case REQUEST_KEEP_ALIVE:
       // The timer is stopped for async responses by write_completion_cb in response.c
-      bool had_timer = stop_request_timer(client);
+      stop_request_timer(client);
       client->keep_alive_enabled = true;
-      if (had_timer)
-        client_unref(client);
       break;
-    }
 
     case REQUEST_CLOSE:
       close_client(client);
