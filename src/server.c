@@ -76,6 +76,10 @@ static struct {
   uv_timer_t *cleanup_timer;
 
   bool server_closed;
+  // True while server_run()'s uv_run() is executing. Used by server_shutdown()
+  // to avoid running a nested event loop from inside an I/O callback.
+  bool dispatching;
+  bool cleanup_done; // True once server_shutdown_cleanup() has run
 } ecewo_server = { 0 };
 
 route_trie_t *global_route_trie = NULL;
@@ -348,40 +352,14 @@ static void on_server_closed(uv_handle_t *handle) {
   }
 }
 
-void server_shutdown(void) {
-  if (ecewo_server.shutdown_requested)
+// Heavy connection-teardown and loop-drain sequence.
+// Must only be called from outside the event loop (i.e. after the outer
+// uv_run() in server_run() has returned), so that close callbacks do not
+// fire while an I/O callback still holds pointers to the client handle.
+static void server_shutdown_cleanup(void) {
+  if (ecewo_server.cleanup_done)
     return;
-
-  ecewo_server.shutdown_requested = 1;
-  ecewo_server.running = 0;
-
-  if (ecewo_server.shutdown_callback)
-    ecewo_server.shutdown_callback();
-
-  stop_cleanup_timer();
-
-  const char *is_worker = getenv("ECEWO_WORKER");
-  bool in_cluster = (is_worker && strcmp(is_worker, "1") == 0);
-
-  // Close signal handlers
-  if (!in_cluster) {
-    if (!uv_is_closing((uv_handle_t *)&ecewo_server.sigint_handle)) {
-      uv_signal_stop(&ecewo_server.sigint_handle);
-      uv_close((uv_handle_t *)&ecewo_server.sigint_handle, NULL);
-    }
-
-    if (!uv_is_closing((uv_handle_t *)&ecewo_server.sigterm_handle)) {
-      uv_signal_stop(&ecewo_server.sigterm_handle);
-      uv_close((uv_handle_t *)&ecewo_server.sigterm_handle, NULL);
-    }
-  }
-
-  if (!uv_is_closing((uv_handle_t *)&ecewo_server.shutdown_async))
-    uv_close((uv_handle_t *)&ecewo_server.shutdown_async, NULL);
-
-  // Stop accepting new connections
-  if (ecewo_server.server && !uv_is_closing((uv_handle_t *)ecewo_server.server))
-    uv_close((uv_handle_t *)ecewo_server.server, on_server_closed);
+  ecewo_server.cleanup_done = true;
 
   // APPLICATION-LEVEL GRACEFUL SHUTDOWN
   uint64_t start = uv_now(ecewo_server.loop);
@@ -441,6 +419,55 @@ void server_shutdown(void) {
     ;
 
   // uv_loop_close() is called in server_cleanup()
+}
+
+void server_shutdown(void) {
+  if (ecewo_server.shutdown_requested)
+    return;
+
+  ecewo_server.shutdown_requested = 1;
+  ecewo_server.running = 0;
+
+  if (ecewo_server.shutdown_callback)
+    ecewo_server.shutdown_callback();
+
+  stop_cleanup_timer();
+
+  const char *is_worker = getenv("ECEWO_WORKER");
+  bool in_cluster = (is_worker && strcmp(is_worker, "1") == 0);
+
+  // Close signal handlers
+  if (!in_cluster) {
+    if (!uv_is_closing((uv_handle_t *)&ecewo_server.sigint_handle)) {
+      uv_signal_stop(&ecewo_server.sigint_handle);
+      uv_close((uv_handle_t *)&ecewo_server.sigint_handle, NULL);
+    }
+
+    if (!uv_is_closing((uv_handle_t *)&ecewo_server.sigterm_handle)) {
+      uv_signal_stop(&ecewo_server.sigterm_handle);
+      uv_close((uv_handle_t *)&ecewo_server.sigterm_handle, NULL);
+    }
+  }
+
+  if (!uv_is_closing((uv_handle_t *)&ecewo_server.shutdown_async))
+    uv_close((uv_handle_t *)&ecewo_server.shutdown_async, NULL);
+
+  // Stop accepting new connections
+  if (ecewo_server.server && !uv_is_closing((uv_handle_t *)ecewo_server.server))
+    uv_close((uv_handle_t *)ecewo_server.server, on_server_closed);
+
+  // If we are currently inside the event loop dispatching a request, running a
+  // nested uv_run() here would fire on_client_closed() for the connection that
+  // is still mid-dispatch inside uv__stream_io(), freeing the embedded uv_tcp_t
+  // handle while libuv still holds a live pointer to it — heap-use-after-free.
+  // Instead, just stop the loop; server_cleanup() will call
+  // server_shutdown_cleanup() once we are safely outside the event loop.
+  if (ecewo_server.dispatching) {
+    uv_stop(ecewo_server.loop);
+    return;
+  }
+
+  server_shutdown_cleanup();
 }
 
 static void router_cleanup(void) {
@@ -562,6 +589,11 @@ static void server_cleanup(void) {
   if (!ecewo_server.shutdown_requested)
     server_shutdown();
 
+  // server_shutdown() may have skipped the heavy cleanup when called from
+  // inside the event loop (dispatching=true). Finish it here now that we are
+  // safely outside any I/O callback.
+  server_shutdown_cleanup();
+
   router_cleanup();
   arena_pool_destroy();
   destroy_date_cache();
@@ -570,7 +602,6 @@ static void server_cleanup(void) {
   inspect_loop(ecewo_server.loop);
 #endif
 
-  // server_shutdown() already ran the loop, just need to close it here
   int result = uv_loop_close(ecewo_server.loop);
   if (result != 0) {
     LOG_ERROR("uv_loop_close failed: %s", uv_strerror(result));
@@ -814,6 +845,9 @@ void server_on_read(uv_stream_t *stream, ssize_t nread, const uv_buf_t *buf) {
   }
 
   if (buf && buf->base) {
+    // Hold an extra reference so the client cannot be freed by router()'s
+    // own client_unref() before we finish the post-router switch below.
+    client_ref(client);
     int result = router(client, buf->base, (size_t)nread);
 
     switch (result) {
@@ -841,6 +875,8 @@ void server_on_read(uv_stream_t *stream, ssize_t nread, const uv_buf_t *buf) {
       close_client(client);
       break;
     }
+
+    client_unref(client);
   }
 }
 
@@ -972,7 +1008,12 @@ void server_run(void) {
     return;
   }
 
+  // Mark that we are inside the event loop so that server_shutdown() called
+  // from within an I/O callback does not run a nested uv_run().
+  ecewo_server.dispatching = true;
   uv_run(ecewo_server.loop, UV_RUN_DEFAULT);
+  ecewo_server.dispatching = false;
+
   server_cleanup();
 }
 

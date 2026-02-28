@@ -289,12 +289,18 @@ int router(client_t *client, const char *request_data, size_t request_len) {
     return REQUEST_CLOSE;
   }
 
+  // Hold a reference so the client cannot be freed while we are executing,
+  // even if a middleware or handler triggers server shutdown synchronously.
+  client_ref(client);
+
   uv_tcp_t *handle = (uv_tcp_t *)&client->handle;
   http_context_t *ctx = &client->persistent_context;
   Arena *arena = client->connection_arena;
 
+  int retval = REQUEST_CLOSE;
+
   if (uv_is_closing((uv_handle_t *)handle))
-    return REQUEST_CLOSE;
+    goto done;
 
   // Feed data
   parse_result_t result = http_parse_request(ctx, request_data, request_len);
@@ -303,7 +309,7 @@ int router(client_t *client, const char *request_data, size_t request_len) {
   if (result == PARSE_PAUSED) {
     if (!arena) {
       send_error(NULL, handle, 500);
-      return REQUEST_CLOSE;
+      goto done;
     }
 
     const char *path = ctx->url;
@@ -317,7 +323,14 @@ int router(client_t *client, const char *request_data, size_t request_len) {
     Res *res = NULL;
 
     if (dispatch(arena, handle, ctx, client, path, path_len, &req, &res) != 0)
-      return REQUEST_CLOSE;
+      goto done;
+
+    // A middleware or handler may have triggered server shutdown synchronously,
+    // causing on_client_closed() to run and mark the client invalid.
+    // ctx, arena, and res all alias into the client struct or its arena,
+    // so we must not touch them once the client has been invalidated.
+    if (!client->valid)
+      goto done;
 
     // Calculate remaining bytes before touching the parser
     // llhttp_get_error_pos() points to where the pause happened
@@ -328,17 +341,20 @@ int router(client_t *client, const char *request_data, size_t request_len) {
 
     llhttp_resume(ctx->parser);
 
-    if (res && res->replied)
-      return res->keep_alive ? REQUEST_KEEP_ALIVE : REQUEST_CLOSE;
+    if (res && res->replied) {
+      retval = res->keep_alive ? REQUEST_KEEP_ALIVE : REQUEST_CLOSE;
+      goto done;
+    }
 
     // Handler wants the body, feed remaining bytes now
+    parse_result_t body_result;
     if (left > 0)
-      result = http_parse_request(ctx, pause_pos, left);
+      body_result = http_parse_request(ctx, pause_pos, left);
     else
-      result = ctx->message_complete ? PARSE_SUCCESS : PARSE_INCOMPLETE;
+      body_result = ctx->message_complete ? PARSE_SUCCESS : PARSE_INCOMPLETE;
 
     // Result after resume
-    switch (result) {
+    switch (body_result) {
     case PARSE_SUCCESS:
       if (ctx->on_body_chunk && req) {
         body_stream_complete(req);
@@ -356,23 +372,30 @@ int router(client_t *client, const char *request_data, size_t request_len) {
             client->pending_handler(preq, pres);
         }
       }
+      // Guard against shutdown triggered during body dispatch above
+      if (!client->valid)
+        goto done;
       {
         Res *final_res = (client->pending_res && client->pending_res->replied)
             ? client->pending_res
             : res;
-        if (final_res && !final_res->replied)
-          return REQUEST_PENDING;
-        return final_res && final_res->keep_alive ? REQUEST_KEEP_ALIVE : REQUEST_CLOSE;
+        if (final_res && !final_res->replied) {
+          retval = REQUEST_PENDING;
+        } else {
+          retval = final_res && final_res->keep_alive ? REQUEST_KEEP_ALIVE : REQUEST_CLOSE;
+        }
       }
+      goto done;
 
     case PARSE_INCOMPLETE:
       // Body still arriving over the network, wait for more data
-      return REQUEST_PENDING;
+      retval = REQUEST_PENDING;
+      goto done;
 
     case PARSE_OVERFLOW:
       LOG_ERROR("Body too large: %s", ctx->error_reason ? ctx->error_reason : "");
       send_error(arena, handle, 413);
-      return REQUEST_CLOSE;
+      goto done;
 
     case PARSE_PAUSED:
     case PARSE_ERROR:
@@ -380,62 +403,74 @@ int router(client_t *client, const char *request_data, size_t request_len) {
       LOG_ERROR("Parse error after resume: %s",
                 ctx->error_reason ? ctx->error_reason : "unknown");
       send_error(arena, handle, 400);
-      return REQUEST_CLOSE;
+      goto done;
     }
   }
 
   // Fallthrough: result before headers-complete
   switch (result) {
   case PARSE_INCOMPLETE:
-    return REQUEST_PENDING;
+    retval = REQUEST_PENDING;
+    goto done;
 
   case PARSE_OVERFLOW:
     LOG_ERROR("Request too large: %s", ctx->error_reason ? ctx->error_reason : "");
     send_error(NULL, handle, 413);
-    return REQUEST_CLOSE;
+    goto done;
 
   case PARSE_ERROR:
     LOG_ERROR("Parse error: %s", ctx->error_reason ? ctx->error_reason : "unknown");
     send_error(NULL, handle, 400);
-    return REQUEST_CLOSE;
+    goto done;
 
   case PARSE_SUCCESS:
     break; // EOF-terminated request completed without pausing
 
   default:
     send_error(NULL, handle, 400);
-    return REQUEST_CLOSE;
+    goto done;
   }
 
   // PARSE_SUCCESS (EOF-terminated, no pause)
   if (!arena) {
     send_error(NULL, handle, 500);
-    return REQUEST_CLOSE;
+    goto done;
   }
 
   if (http_message_needs_eof(ctx)) {
     if (http_finish_parsing(ctx) != PARSE_SUCCESS) {
       LOG_ERROR("Finish parse failed: %s", ctx->error_reason ? ctx->error_reason : "");
       send_error(arena, handle, 400);
-      return REQUEST_CLOSE;
+      goto done;
     }
   }
 
-  const char *path = ctx->url;
-  size_t path_len = ctx->path_length;
-  if (!path || path_len == 0) {
-    path = "/";
-    path_len = 1;
+  {
+    const char *path = ctx->url;
+    size_t path_len = ctx->path_length;
+    if (!path || path_len == 0) {
+      path = "/";
+      path_len = 1;
+    }
+
+    Req *req = NULL;
+    Res *res = NULL;
+
+    if (dispatch(arena, handle, ctx, client, path, path_len, &req, &res) != 0)
+      goto done;
+
+    if (!client->valid)
+      goto done;
+
+    if (res && !res->replied) {
+      retval = REQUEST_PENDING;
+      goto done;
+    }
+
+    retval = res && res->keep_alive ? REQUEST_KEEP_ALIVE : REQUEST_CLOSE;
   }
 
-  Req *req = NULL;
-  Res *res = NULL;
-
-  if (dispatch(arena, handle, ctx, client, path, path_len, &req, &res) != 0)
-    return REQUEST_CLOSE;
-
-  if (res && !res->replied)
-    return REQUEST_PENDING;
-
-  return res && res->keep_alive ? REQUEST_KEEP_ALIVE : REQUEST_CLOSE;
+done:
+  client_unref(client);
+  return retval;
 }
