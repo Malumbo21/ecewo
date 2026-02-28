@@ -1,20 +1,16 @@
-.PHONY: format lint lint-fix lint-verbose clean-lint help
+.PHONY: format format-file lint lint-fix lint-file compile-db clean-lint help
 
 SOURCES := $(shell find src include -type f \( -name "*.c" -o -name "*.h" \))
 
 format:
 	@clang-format -i $(SOURCES)
 
+format-file:
+	@clang-format -i $(FILE)
+
 lint:
 	@echo "Running clang-tidy on $(words $(SOURCES)) files..."
 	@clang-tidy -p build $(SOURCES) --quiet 2>&1 | grep -v "warnings generated" || true
-
-lint-verbose:
-	@echo "Running clang-tidy (verbose mode)..."
-	@for file in $(SOURCES); do \
-		echo "Analyzing: $$file"; \
-		clang-tidy -p build "$$file"; \
-	done
 
 lint-fix:
 	@echo "Running clang-tidy with auto-fix..."
@@ -34,8 +30,8 @@ clean-lint:
 help:
 	@echo "Available targets:"
 	@echo "  make format        - Run clang-format"
+	@echo "  make format-file FILE=src/file.c - Format single file"
 	@echo "  make lint          - Run clang-tidy (quiet mode, recommended)"
-	@echo "  make lint-verbose  - Run clang-tidy with detailed output"
 	@echo "  make lint-fix      - Auto-fix issues where possible"
 	@echo "  make lint-file FILE=src/file.c - Check single file"
 	@echo "  make compile-db    - Generate compile_commands.json"
