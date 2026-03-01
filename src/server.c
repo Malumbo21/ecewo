@@ -189,14 +189,13 @@ static void close_client(client_t *client) {
     // discards incoming data until the peer closes its end
     uv_shutdown_t *req = malloc(sizeof(uv_shutdown_t));
     if (req) {
-      client->draining = true;
-      client_ref(client); //  on_drain_shutdown releases it
       req->data = client;
-      if (uv_shutdown(req, (uv_stream_t *)&client->handle, on_drain_shutdown) == 0)
+      if (uv_shutdown(req, (uv_stream_t *)&client->handle, on_drain_shutdown) == 0) {
+        client->draining = true;
+        client_ref(client); // on_drain_shutdown releases it
         return;
+      }
       // uv_shutdown failed, fall through to direct close
-      client->draining = false;
-      client_unref(client);
       free(req);
     }
 
