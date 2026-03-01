@@ -16,6 +16,7 @@ struct client_s {
   uv_buf_t read_buf;
   char buffer[READ_BUFFER_SIZE];
   bool closing;
+  bool draining; // True while draining receive buffer before closing
   uint64_t last_activity;
   bool keep_alive_enabled;
   struct client_s *next;

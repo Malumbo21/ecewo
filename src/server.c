@@ -143,6 +143,32 @@ static void on_client_closed(uv_handle_t *handle) {
   client_unref(client);
 }
 
+// Called when the write-side shutdown completes or is cancelled.
+// Drain mode keeps the read side alive until the peer closes.
+// Fixes the issue when closing a socket that
+// still has unread data in its receive buffer
+static void on_drain_shutdown(uv_shutdown_t *req, int status) {
+  client_t *client = (client_t *)req->data;
+  free(req);
+
+  if (uv_is_closing((uv_handle_t *)&client->handle)) {
+    client_unref(client);
+    return;
+  }
+
+  if (status < 0) {
+    // Close directly.
+    client->draining = false;
+    uv_read_stop((uv_stream_t *)&client->handle);
+    uv_close((uv_handle_t *)&client->handle, on_client_closed);
+  } else {
+    uv_read_stop((uv_stream_t *)&client->handle);
+    uv_read_start((uv_stream_t *)&client->handle, server_alloc_buffer, server_on_read);
+  }
+
+  client_unref(client); // release the drain reference
+}
+
 static void close_client(client_t *client) {
   if (!client || client->closing)
     return;
@@ -156,10 +182,27 @@ static void close_client(client_t *client) {
   client->closing = true;
   client->valid = false;
 
-  uv_read_stop((uv_stream_t *)&client->handle);
+  if (!uv_is_closing((uv_handle_t *)&client->handle)) {
+    // Shut down the write side and drain the receive buffer before closing.
+    // uv_shutdown() waits for any pending writes (e.g. a 413 reply) to
+    // finish, then the drain loop in server_on_read
+    // discards incoming data until the peer closes its end
+    uv_shutdown_t *req = malloc(sizeof(uv_shutdown_t));
+    if (req) {
+      client->draining = true;
+      client_ref(client); //  on_drain_shutdown releases it
+      req->data = client;
+      if (uv_shutdown(req, (uv_stream_t *)&client->handle, on_drain_shutdown) == 0)
+        return;
+      // uv_shutdown failed, fall through to direct close
+      client->draining = false;
+      client_unref(client);
+      free(req);
+    }
 
-  if (!uv_is_closing((uv_handle_t *)&client->handle))
+    uv_read_stop((uv_stream_t *)&client->handle);
     uv_close((uv_handle_t *)&client->handle, on_client_closed);
+  }
 }
 
 static void cleanup_idle_connections(uv_timer_t *handle) {
@@ -328,14 +371,16 @@ static void close_walk_cb(uv_handle_t *handle, void *arg) {
   if (uv_is_closing(handle))
     return;
 
-  if (handle->type == UV_TCP) {
-  } else if (handle->type == UV_TIMER) {
+  if (handle->type == UV_TIMER) {
     uv_timer_stop((uv_timer_t *)handle);
   } else if (handle->type == UV_SIGNAL) {
     uv_signal_stop((uv_signal_t *)handle);
   }
 
-  uv_close(handle, close_cb);
+  if (handle->type == UV_TCP && handle->data != NULL)
+    uv_close(handle, on_client_closed);
+  else
+    uv_close(handle, close_cb);
 }
 
 static void on_server_closed(uv_handle_t *handle) {
@@ -760,7 +805,7 @@ void server_alloc_buffer(uv_handle_t *handle, size_t suggested_size, uv_buf_t *b
   (void)suggested_size;
   client_t *client = (client_t *)handle->data;
 
-  if (!client || client->closing || ecewo_server.shutdown_requested) {
+  if (!client || (client->closing && !client->draining) || ecewo_server.shutdown_requested) {
     buf->base = NULL;
     buf->len = 0;
     return;
@@ -772,7 +817,23 @@ void server_alloc_buffer(uv_handle_t *handle, size_t suggested_size, uv_buf_t *b
 void server_on_read(uv_stream_t *stream, ssize_t nread, const uv_buf_t *buf) {
   client_t *client = (client_t *)stream->data;
 
-  if (!client || client->closing)
+  if (!client)
+    return;
+
+  // Discard all incoming data to empty the receive buffer.
+  // This prevents Windows from sending a connection reset
+  // when we close a socket that still has unread receive data
+  // (which would discard our response).
+  if (client->draining) {
+    if (nread < 0) {
+      uv_read_stop(stream);
+      if (!uv_is_closing((uv_handle_t *)&client->handle))
+        uv_close((uv_handle_t *)&client->handle, on_client_closed);
+    }
+    return;
+  }
+
+  if (client->closing)
     return;
 
   if (ecewo_server.shutdown_requested) {
