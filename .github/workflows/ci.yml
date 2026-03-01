@@ -3,12 +3,18 @@ name: CI
 on:
   push:
     branches: [ main ]
-    paths-ignore:
-      - '**/*.md'
+    paths:
+      - 'src/**'
+      - 'include/**'
+      - 'CMakeLists.txt'
+      - 'test/**'
   pull_request:
     branches: [ main ]
-    paths-ignore:
-      - '**/*.md'
+    paths:
+      - 'src/**'
+      - 'include/**'
+      - 'CMakeLists.txt'
+      - 'test/**'
 
 env:
   BUILD_TYPE: Release
