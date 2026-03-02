@@ -1,0 +1,70 @@
+name: Sanitizer
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'src/**'
+      - 'include/**'
+      - 'CMakeLists.txt'
+      - 'tests/**'
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'src/**'
+      - 'include/**'
+      - 'CMakeLists.txt'
+      - 'tests/**'
+
+jobs:
+  sanitizers:
+    name: ${{ matrix.name }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: ASAN/UBSAN
+            slug: asan-ubsan
+            cmake_options: "-DECEWO_ASAN=ON -DECEWO_UBSAN=ON"
+
+          - name: MSAN
+            slug: msan
+            cmake_options: "-DECEWO_MSAN=ON"
+
+          - name: TSAN
+            slug: tsan
+            cmake_options: "-DECEWO_TSAN=ON -DCMAKE_BUILD_TYPE=Release"
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y cmake clang
+
+    - name: Configure
+      run: |
+        cmake -B build \
+          -DCMAKE_BUILD_TYPE=Debug \
+          -DCMAKE_C_COMPILER=clang \
+          -DCMAKE_CXX_COMPILER=clang++ \
+          -DECEWO_BUILD_TESTS=ON \
+          ${{ matrix.cmake_options }}
+
+    - name: Build
+      run: cmake --build build -j$(nproc)
+
+    - name: Run tests
+      working-directory: build
+      run: ctest --output-on-failure --verbose
+
+    - name: Upload test results
+      if: failure()
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ matrix.slug }}-test-results
+        path: build/Testing/Temporary/

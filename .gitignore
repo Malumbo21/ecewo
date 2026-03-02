@@ -1,3 +1,6 @@
 .vscode
 build
-build-sanitizer
+build-asan-ubsan
+build-msan
+build-tsan
+build-valgrind

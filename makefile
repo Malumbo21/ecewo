@@ -1,4 +1,4 @@
-.PHONY: test sanitizer format format-file lint lint-fix lint-file help
+.PHONY: all test asan-ubsan msan tsan valgrind format format-file lint lint-fix lint-file help
 
 SOURCES := $(shell find src src/utils include -type f \( -name "*.c" -o -name "*.h" \))
 
@@ -8,19 +8,62 @@ test:
 	@cmake --build build -j$(nproc)
 	@ctest --test-dir build
 
-sanitizer:
-	@mkdir -p build-sanitizer
+asan-ubsan:
+	@mkdir -p build-asan-ubsan
 	@( \
-		CC=clang cmake -B build-sanitizer \
+		cmake -B build-asan-ubsan \
+			-DCMAKE_BUILD_TYPE=Debug \
+			-DCMAKE_C_COMPILER=clang \
+			-DECEWO_BUILD_TESTS=ON \
+			-DECEWO_ASAN=ON \
+			-DECEWO_UBSAN=ON && \
+		cmake --build build-asan-ubsan -j$(nproc) && \
+		ctest --test-dir build-asan-ubsan --output-on-failure --verbose \
+	)
+
+msan:
+	@mkdir -p build-msan
+	@( \
+		cmake -B build-msan \
+			-DCMAKE_BUILD_TYPE=Debug \
+			-DCMAKE_C_COMPILER=clang \
+			-DCMAKE_CXX_COMPILER=clang++ \
+			-DECEWO_BUILD_TESTS=ON \
+			-DECEWO_MSAN=ON && \
+		cmake --build build-msan -j$(nproc) && \
+		ctest --test-dir build-msan --output-on-failure --verbose \
+	)
+
+tsan:
+	@mkdir -p build-tsan
+	@( \
+		cmake -B build-tsan \
+			-DCMAKE_BUILD_TYPE=Release \
+			-DCMAKE_C_COMPILER=clang \
+			-DCMAKE_CXX_COMPILER=clang++ \
+			-DECEWO_BUILD_TESTS=ON \
+			-DECEWO_TSAN=ON && \
+		cmake --build build-tsan -j$(nproc) && \
+		ctest --test-dir build-tsan --output-on-failure --verbose \
+	)
+
+valgrind:
+	@mkdir -p build-valgrind
+	@( \
+		cmake -B build-valgrind \
 			-DCMAKE_BUILD_TYPE=Debug \
 			-DECEWO_BUILD_TESTS=ON \
-			-DCMAKE_C_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer -g" \
-			-DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined" && \
-		cmake --build build-sanitizer -j$(nproc) && \
-		ASAN_OPTIONS="detect_leaks=1:halt_on_error=1:abort_on_error=1" \
-		UBSAN_OPTIONS="halt_on_error=1:print_stacktrace=1" \
-		ctest --test-dir build-sanitizer --output-on-failure --verbose \
+			-DCTEST_MEMORYCHECK_COMMAND=valgrind \
+			-DCTEST_MEMORYCHECK_COMMAND_OPTIONS="--leak-check=full;--show-leak-kinds=definite,indirect;--error-exitcode=1" && \
+		cmake --build build-valgrind -j$(nproc) && \
+		ctest --test-dir build-valgrind \
+			--output-on-failure \
+			--verbose \
+			-T memcheck \
+			--timeout 300 \
 	)
+
+all: test asan-ubsan msan tsan valgrind
 
 format:
 	@clang-format -i $(SOURCES)
@@ -41,11 +84,21 @@ lint-file:
 	@clang-tidy -p build $(FILE)
 
 help:
-	@echo "Available targets:"
-	@echo "  make test"			- Build and run tests
-	@echo "  make sanitizer"    - Build and run tests with sanitizers
-	@echo "  make format        - Run clang-format"
-	@echo "  make format-file FILE=src/file.c - Format single file"
-	@echo "  make lint          - Run clang-tidy (quiet mode, recommended)"
-	@echo "  make lint-fix      - Auto-fix issues where possible"
-	@echo "  make lint-file FILE=src/file.c - Check single file"
+	@printf "\nAvailable targets:\n\n"
+	@printf "Build and run tests:\n"
+	@printf "%-40s %s\n" "make test" "Build and run tests"
+	@printf "%-40s %s\n" "make asan-ubsan" "Build and run tests with ASAN+UBSAN"
+	@printf "%-40s %s\n" "make msan" "Build and run tests with MSAN"
+	@printf "%-40s %s\n" "make tsan" "Build and run tests with TSAN"
+	@printf "%-40s %s\n" "make valgrind" "Build and run tests with Valgrind"
+	@printf "%-40s %s"\n "make all" "Run all of them sequentially"
+	@printf "\n"
+	@printf "Formatting:\n"
+	@printf "%-40s %s\n" "make format" "Run clang-format"
+	@printf "%-40s %s\n" "make format-file FILE=src/file.c" "Format single file"
+	@printf "\n"
+	@printf "Linting:\n"
+	@printf "%-40s %s\n" "make lint" "Run clang-tidy"
+	@printf "%-40s %s\n" "make lint-fix" "Auto-fix issues where possible"
+	@printf "%-40s %s\n" "make lint-file FILE=src/file.c" "Check single file"
+	@printf "\n"

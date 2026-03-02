@@ -212,8 +212,8 @@ jobs:
         name: windows-ucrt64-test-results
         path: build/Testing/Temporary/
 
-  memory-check:
-    name: Memory Leak Check (Valgrind)
+  valgrind:
+    name: Valgrind
     runs-on: ubuntu-latest
     timeout-minutes: 5
     
@@ -245,37 +245,3 @@ jobs:
           --verbose \
           -T memcheck \
           --timeout 300
-
-  sanitizers:
-    name: ASAN/UBSAN
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-      
-    - name: Install dependencies
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y cmake build-essential clang
-    
-    - name: Configure ASAN/UBSAN
-      env:
-        CC: clang
-      run: |
-        cmake -B build \
-          -DCMAKE_BUILD_TYPE=Debug \
-          -DECEWO_BUILD_TESTS=ON \
-          -DCMAKE_C_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer -g" \
-          -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined"
-    
-    - name: Build
-      run: cmake --build build
-    
-    - name: Run tests with ASAN/UBSAN
-      working-directory: build
-      env:
-        ASAN_OPTIONS: "detect_leaks=1:halt_on_error=1:abort_on_error=1"
-        UBSAN_OPTIONS: "halt_on_error=1:print_stacktrace=1"
-      run: ctest -C Debug --output-on-failure --verbose
