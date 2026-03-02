@@ -66,22 +66,27 @@ jobs:
     - name: Install dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y cmake clang
-    
+        sudo apt-get install -y cmake clang clang-tidy
+
     - name: Configure CMake
       run: |
         cmake -B build \
           -DCMAKE_BUILD_TYPE=${{env.BUILD_TYPE}} \
           -DCMAKE_C_COMPILER=clang \
           -DECEWO_BUILD_TESTS=ON
-    
+
     - name: Build
       run: cmake --build build --config ${{env.BUILD_TYPE}} -j$(nproc)
-    
+
     - name: Run tests
       working-directory: build
       run: ctest -C ${{env.BUILD_TYPE}} --output-on-failure --verbose
-    
+
+    - name: Run clang-tidy
+      run: |
+        find src src/utils include -type f \( -name "*.c" -o -name "*.h" \) \
+          | xargs clang-tidy -p build --quiet
+
     - name: Upload test results
       if: failure()
       uses: actions/upload-artifact@v4
