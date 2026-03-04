@@ -451,6 +451,11 @@ static void server_shutdown_cleanup(void) {
     current = next;
   }
 
+  // All requests are done and the loop is still alive.
+  // Safe for plugin cleanup that calls uv_close() or other libuv APIs.
+  if (ecewo_server.shutdown_callback)
+    ecewo_server.shutdown_callback();
+
   // LIBUV LOOP CLEANUP
   uv_stop(ecewo_server.loop);
   uv_walk(ecewo_server.loop, close_walk_cb, NULL);
@@ -466,9 +471,6 @@ void server_shutdown(void) {
 
   ecewo_server.shutdown_requested = 1;
   ecewo_server.running = 0;
-
-  if (ecewo_server.shutdown_callback)
-    ecewo_server.shutdown_callback();
 
   stop_cleanup_timer();
 

@@ -52,3 +52,8 @@
 11. [Plugins](11.plugins.md)
     1. [Adding One-By-One](11.plugins.md#adding-one-by-one)
     2. [Adding Multiple](11.plugins.md#adding-multiple)
+12. [Graceful Shutdown](12.graceful-shutdown.md)
+    1. [Overview](12.graceful-shutdown.md#overview)
+    2. [Shutdown Sequence](12.graceful-shutdown.md#shutdown-sequence)
+    3. [Resource Cleanup](12.graceful-shutdown.md#resource-cleanup)
+    4. [intentional Shutdown](12.graceful-shutdown.md#intentional-shutdown)
