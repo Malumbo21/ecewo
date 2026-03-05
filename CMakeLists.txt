@@ -123,11 +123,11 @@ if(NOT TARGET ecewo::ecewo)
     src/middleware.c
     src/route-trie.c
     src/route-register.c
-    src/arena.c
-    src/arena-pool.c
     src/spawn.c
     src/body.c
     src/utils/date-cache.c
+    src/arena/arena.c
+    src/arena/arena-pool.c
   )
 
   if(ECEWO_BUILD_SHARED)
@@ -156,6 +156,7 @@ if(NOT TARGET ecewo::ecewo)
     PRIVATE
       ${CMAKE_CURRENT_SOURCE_DIR}/src
       ${CMAKE_CURRENT_SOURCE_DIR}/src/utils
+      ${CMAKE_CURRENT_SOURCE_DIR}/src/arena
       ${CMAKE_BINARY_DIR}/_deps/llhttp-src/include
   )
 
