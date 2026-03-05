@@ -130,29 +130,26 @@ void *arena_memdup(Arena *a, void *data, size_t size) {
   return arena_memcpy(ptr, data, size);
 }
 
-static char *arena_vsprintf(Arena *a, const char *format, va_list args) {
-  va_list args_copy;
+char *arena_sprintf(Arena *a, const char *format, ...) {
+  va_list args, args_copy;
+  va_start(args, format);
   va_copy(args_copy, args);
   int n = vsnprintf(NULL, 0, format, args_copy);
   va_end(args_copy);
 
-  if (n < 0)
+  if (n < 0) {
+    va_end(args);
     return NULL;
+  }
 
   char *result = (char *)arena_alloc(a, n + 1);
 
-  if (!result)
+  if (!result) {
+    va_end(args);
     return NULL;
+  }
 
   vsnprintf(result, n + 1, format, args);
-
-  return result;
-}
-
-char *arena_sprintf(Arena *a, const char *format, ...) {
-  va_list args;
-  va_start(args, format);
-  char *result = arena_vsprintf(a, format, args);
   va_end(args);
 
   return result;
