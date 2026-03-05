@@ -1,5 +1,5 @@
-// Original work Copyright 2022 Alexey Kutepov <reximkut@gmail.com>
-// Modified work Copyright 2025 Savas Sahin <savashn@proton.me>
+// Copyright 2022 Alexey Kutepov <reximkut@gmail.com>
+// Copyright 2025 Savas Sahin <savashn@proton.me>
 
 // Permission is hereby granted, free of charge, to any person obtaining
 // a copy of this software and associated documentation files (the
@@ -26,7 +26,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <stdbool.h>
-#include "arena.h"
+#include "arena-internal.h"
 
 static inline ArenaRegion *new_region(size_t capacity) {
   size_t size_bytes = sizeof(ArenaRegion) + sizeof(uintptr_t) * capacity;
@@ -116,6 +116,7 @@ static size_t arena_strlen(const char *s) {
   return n;
 }
 
+// TODO: Remove it in v4
 void *arena_memcpy(void *dest, const void *src, size_t n) {
   char *d = dest;
   const char *s = src;

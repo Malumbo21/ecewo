@@ -5,7 +5,7 @@
 #include "route-trie.h"
 #include "middleware.h"
 #include "router.h"
-#include "arena.h"
+#include "arena-internal.h"
 #include "utils.h"
 #include "logger.h"
 

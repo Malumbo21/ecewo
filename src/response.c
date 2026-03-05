@@ -1,5 +1,5 @@
 #include "uv.h"
-#include "arena.h"
+#include "arena-internal.h"
 #include "utils.h"
 #include "logger.h"
 #include "server.h"

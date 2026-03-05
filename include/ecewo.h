@@ -9,18 +9,14 @@ extern "C" {
 #include <stdint.h>
 #include <stdbool.h>
 #include <string.h>
+#include "arena.h"
 
 typedef struct uv_loop_s uv_loop_t;
 typedef struct uv_timer_s uv_timer_t;
 typedef struct uv_tcp_s uv_tcp_t;
 typedef uv_timer_t Timer;
 
-typedef struct ArenaRegion ArenaRegion;
 typedef struct client_s client_t;
-
-typedef struct Arena {
-  ArenaRegion *begin, *end;
-} Arena;
 
 // Internal struct, do not use it
 typedef struct {
@@ -202,22 +198,6 @@ static inline void send_json(Res *res, int status, const char *body) {
   set_header(res, "Content-Type", "application/json");
   reply(res, status, body, strlen(body));
 }
-
-// ARENA FUNCTIONS
-void *arena_alloc(Arena *a, size_t size_bytes);
-void *arena_realloc(Arena *a, void *oldptr, size_t oldsz, size_t newsz);
-char *arena_strdup(Arena *a, const char *cstr);
-void *arena_memdup(Arena *a, void *data, size_t size);
-char *arena_sprintf(Arena *a, const char *format, ...);
-void *arena_memcpy(void *dest, const void *src, size_t n);
-void arena_free(Arena *a);
-
-// ARENA POOL
-Arena *arena_borrow(void);
-void arena_return(Arena *arena);
-#ifdef ECEWO_DEBUG
-void arena_pool_stats(void);
-#endif
 
 // MIDDLEWARE FUNCTIONS
 

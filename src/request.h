@@ -2,10 +2,8 @@
 #define ECEWO_REQUEST_H
 
 #include <stddef.h>
-#include "arena.h"
 
-typedef struct
-{
+typedef struct {
   char *key;
   void *data;
 } context_entry_t;

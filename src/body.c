@@ -1,7 +1,7 @@
 #include "ecewo.h"
 #include "uv.h"
 #include "http.h"
-#include "arena.h"
+#include "arena-internal.h"
 #include "server.h"
 #include "logger.h"
 #include <stdlib.h>

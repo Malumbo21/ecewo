@@ -2,7 +2,7 @@
 #include "route-trie.h"
 #include "middleware.h"
 #include "server.h"
-#include "arena.h"
+#include "arena-internal.h"
 #include "utils.h"
 #include "request.h"
 #include "logger.h"
