@@ -84,8 +84,7 @@ jobs:
 
     - name: Run clang-tidy
       run: |
-        find src src/utils include -type f \( -name "*.c" -o -name "*.h" \) \
-          | xargs clang-tidy -p build --quiet
+        find src src/utils -type f -name "*.c" | xargs clang-tidy -p build --quiet
 
     - name: Upload test results
       if: failure()

@@ -72,8 +72,7 @@ format-file:
 	@clang-format -i $(FILE)
 
 lint:
-	@echo "Running clang-tidy on $(words $(SOURCES)) files..."
-	@clang-tidy -p build $(SOURCES) --quiet 2>&1 | grep -v "warnings generated" || true
+	find src src/utils -name "*.c" | xargs clang-tidy -p build --quiet
 
 lint-fix:
 	@echo "Running clang-tidy with auto-fix..."

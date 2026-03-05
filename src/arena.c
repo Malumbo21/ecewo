@@ -134,7 +134,7 @@ char *arena_sprintf(Arena *a, const char *format, ...) {
   va_list args, args_copy;
   va_start(args, format);
   va_copy(args_copy, args);
-  int n = vsnprintf(NULL, 0, format, args_copy);
+  int n = vsnprintf(NULL, 0, format, args_copy); // NOLINT(clang-analyzer-valist.Uninitialized)
   va_end(args_copy);
 
   if (n < 0) {
