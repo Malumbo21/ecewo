@@ -5,7 +5,6 @@
 #include "logger.h"
 
 #define MIN_BUFFER_SIZE 64
-#define GROWTH_FACTOR 1.5
 #define MAX_SINGLE_ALLOCATION (10UL * 1024UL * 1024UL)
 #define ABSOLUTE_MAX_REQUEST (50UL * 1024UL * 1024UL)
 #define MAX_HEADER_SIZE (8UL * 1024UL)
@@ -32,12 +31,14 @@ static size_t calculate_next_size(size_t current, size_t needed) {
   size_t new_size = current < MIN_BUFFER_SIZE ? MIN_BUFFER_SIZE : current;
 
   while (new_size < needed) {
-    if (new_size > (size_t)(SIZE_MAX / GROWTH_FACTOR)) {
+    // DOES: SIZE_MAX / 1.5
+    if (new_size > (SIZE_MAX / 3) * 2) {
       new_size = needed + MIN_BUFFER_SIZE;
       break;
     }
 
-    size_t next = (size_t)(new_size * GROWTH_FACTOR);
+    // DOES: new_size * 1.5
+    size_t next = (new_size * 3) / 2;
     if (next <= new_size) {
       new_size = needed + MIN_BUFFER_SIZE;
       break;
