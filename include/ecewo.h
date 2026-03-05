@@ -220,7 +220,14 @@ void arena_pool_stats(void);
 #endif
 
 // MIDDLEWARE FUNCTIONS
-void use(MiddlewareHandler middleware_handler);
+void register_use(const char *path, MiddlewareHandler middleware_handler);
+
+// use(fn)         — global middleware, runs for every request
+// use("/path", fn) — prefix middleware, runs only when path starts with "/path"
+#define _use_select(_1, _2, NAME, ...) NAME
+#define use(...) _use_select(__VA_ARGS__, _use_path, _use_global)(__VA_ARGS__)
+#define _use_global(fn) register_use(NULL, fn)
+#define _use_path(path, fn) register_use(path, fn)
 void set_context(Req *req, const char *key, void *data);
 void *get_context(Req *req, const char *key);
 

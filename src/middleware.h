@@ -14,7 +14,12 @@ typedef struct MiddlewareInfo {
   RequestHandler handler;
 } MiddlewareInfo;
 
-extern MiddlewareHandler *global_middleware;
+typedef struct {
+  const char *path_prefix;
+  MiddlewareHandler handler;
+} GlobalMiddlewareEntry;
+
+extern GlobalMiddlewareEntry *global_middleware;
 extern uint16_t global_middleware_count;
 
 void chain_start(Req *req, Res *res, MiddlewareInfo *middleware_info);

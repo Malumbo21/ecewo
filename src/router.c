@@ -221,7 +221,7 @@ static int dispatch(Arena *arena, uv_tcp_t *handle, http_context_t *ctx, client_
   }
   if (!has_stream_middleware) {
     for (uint16_t i = 0; i < global_middleware_count; i++) {
-      if ((void *)global_middleware[i] == (void *)body_stream) {
+      if ((void *)global_middleware[i].handler == (void *)body_stream) {
         has_stream_middleware = true;
         break;
       }
