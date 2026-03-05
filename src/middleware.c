@@ -108,7 +108,7 @@ void chain_start(Req *req, Res *res, MiddlewareInfo *middleware_info) {
   execute_next(req, res);
 }
 
-void register_use(const char *path, MiddlewareHandler middleware_handler) {
+void ecewo_register_use(const char *path, MiddlewareHandler middleware_handler) {
   if (!middleware_handler) {
     LOG_ERROR("NULL middleware handler");
     abort();

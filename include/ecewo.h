@@ -220,14 +220,21 @@ void arena_pool_stats(void);
 #endif
 
 // MIDDLEWARE FUNCTIONS
-void register_use(const char *path, MiddlewareHandler middleware_handler);
 
-// use(fn)         — global middleware, runs for every request
-// use("/path", fn) — prefix middleware, runs only when path starts with "/path"
-#define _use_select(_1, _2, NAME, ...) NAME
-#define use(...) _use_select(__VA_ARGS__, _use_path, _use_global)(__VA_ARGS__)
-#define _use_global(fn) register_use(NULL, fn)
-#define _use_path(path, fn) register_use(path, fn)
+// Internal function, do not use it
+void ecewo_register_use(const char *path, MiddlewareHandler middleware_handler);
+
+// Internal macro, do not use it
+#define ECEWO_USE_SELECT(_1, _2, NAME, ...) NAME
+// Internal macro, do not use it
+#define ECEWO_USE_GLOBAL(fn) ecewo_register_use(NULL, fn)
+// Internal macro, do not use it
+#define ECEWO_USE_PATH(path, fn) ecewo_register_use(path, fn)
+
+// use(fn) => global middleware, runs for every request
+// use("/path", fn) => prefix middleware, runs only when path starts with "/path"
+#define use(...) ECEWO_USE_SELECT(__VA_ARGS__, ECEWO_USE_PATH, ECEWO_USE_GLOBAL)(__VA_ARGS__)
+
 void set_context(Req *req, const char *key, void *data);
 void *get_context(Req *req, const char *key);
 
@@ -258,34 +265,41 @@ typedef enum {
 #define MW(...) \
   (sizeof((void *[]) { __VA_ARGS__ }) / sizeof(void *) - 1)
 
-void register_get(const char *path, int mw_count, ...);
-void register_post(const char *path, int mw_count, ...);
-void register_put(const char *path, int mw_count, ...);
-void register_patch(const char *path, int mw_count, ...);
-void register_del(const char *path, int mw_count, ...);
-void register_head(const char *path, int mw_count, ...);
-void register_options(const char *path, int mw_count, ...);
+// Internal function, do not use it
+void ecewo_register_get(const char *path, int mw_count, ...);
+// Internal function, do not use it
+void ecewo_register_post(const char *path, int mw_count, ...);
+// Internal function, do not use it
+void ecewo_register_put(const char *path, int mw_count, ...);
+// Internal function, do not use it
+void ecewo_register_patch(const char *path, int mw_count, ...);
+// Internal function, do not use it
+void ecewo_register_del(const char *path, int mw_count, ...);
+// Internal function, do not use it
+void ecewo_register_headl(const char *path, int mw_count, ...);
+// Internal function, do not use it
+void ecewo_register_options(const char *path, int mw_count, ...);
 
 #define get(path, ...) \
-  register_get(path, MW(__VA_ARGS__), __VA_ARGS__)
+  ecewo_register_get(path, MW(__VA_ARGS__), __VA_ARGS__)
 
 #define post(path, ...) \
-  register_post(path, MW(__VA_ARGS__), __VA_ARGS__)
+  ecewo_register_post(path, MW(__VA_ARGS__), __VA_ARGS__)
 
 #define put(path, ...) \
-  register_put(path, MW(__VA_ARGS__), __VA_ARGS__)
+  ecewo_register_put(path, MW(__VA_ARGS__), __VA_ARGS__)
 
 #define patch(path, ...) \
-  register_patch(path, MW(__VA_ARGS__), __VA_ARGS__)
+  ecewo_register_patch(path, MW(__VA_ARGS__), __VA_ARGS__)
 
 #define del(path, ...) \
-  register_del(path, MW(__VA_ARGS__), __VA_ARGS__)
+  ecewo_register_del(path, MW(__VA_ARGS__), __VA_ARGS__)
 
 #define head(path, ...) \
-  register_head(path, MW(__VA_ARGS__), __VA_ARGS__)
+  ecewo_register_headl(path, MW(__VA_ARGS__), __VA_ARGS__)
 
 #define options(path, ...) \
-  register_options(path, MW(__VA_ARGS__), __VA_ARGS__)
+  ecewo_register_options(path, MW(__VA_ARGS__), __VA_ARGS__)
 
 // Called for each chunk of body data.
 typedef void (*BodyDataCb)(Req *req, const char *data, size_t len);
