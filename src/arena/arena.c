@@ -58,45 +58,45 @@ bool new_region_to(ArenaRegion **begin, ArenaRegion **end, size_t capacity) {
   return true;
 }
 
-void *arena_alloc(Arena *a, size_t size_bytes) {
+void *arena_alloc(Arena *arena, size_t size_bytes) {
   size_t size = (size_bytes + sizeof(uintptr_t) - 1) / sizeof(uintptr_t);
 
-  if (a->end == NULL) {
+  if (arena->end == NULL) {
     size_t capacity = ARENA_REGION_SIZE;
 
     if (capacity < size)
       capacity = size;
 
-    if (!new_region_to(&a->begin, &a->end, capacity))
+    if (!new_region_to(&arena->begin, &arena->end, capacity))
       return NULL;
   }
 
-  while (a->end->count + size > a->end->capacity && a->end->next != NULL) {
-    a->end = a->end->next;
+  while (arena->end->count + size > arena->end->capacity && arena->end->next != NULL) {
+    arena->end = arena->end->next;
   }
 
-  if (a->end->count + size > a->end->capacity) {
+  if (arena->end->count + size > arena->end->capacity) {
     size_t capacity = ARENA_REGION_SIZE;
     if (capacity < size)
       capacity = size;
 
-    a->end->next = new_region(capacity);
-    if (!a->end->next)
+    arena->end->next = new_region(capacity);
+    if (!arena->end->next)
       return NULL;
 
-    a->end = a->end->next;
+    arena->end = arena->end->next;
   }
 
-  void *result = &a->end->data[a->end->count];
-  a->end->count += size;
+  void *result = &arena->end->data[arena->end->count];
+  arena->end->count += size;
   return result;
 }
 
-void *arena_realloc(Arena *a, void *oldptr, size_t oldsz, size_t newsz) {
+void *arena_realloc(Arena *arena, void *oldptr, size_t oldsz, size_t newsz) {
   if (newsz <= oldsz)
     return oldptr;
 
-  void *newptr = arena_alloc(a, newsz);
+  void *newptr = arena_alloc(arena, newsz);
 
   if (!newptr)
     return NULL;
@@ -127,12 +127,12 @@ void *arena_memcpy(void *dest, const void *src, size_t n) {
   return dest;
 }
 
-char *arena_strdup(Arena *a, const char *cstr) {
+char *arena_strdup(Arena *arena, const char *cstr) {
   if (!cstr)
     return NULL;
 
   size_t n = arena_strlen(cstr);
-  char *dup = (char *)arena_alloc(a, n + 1);
+  char *dup = (char *)arena_alloc(arena, n + 1);
 
   if (!dup)
     return NULL;
@@ -142,18 +142,18 @@ char *arena_strdup(Arena *a, const char *cstr) {
   return dup;
 }
 
-void *arena_memdup(Arena *a, void *data, size_t size) {
+void *arena_memdup(Arena *arena, void *data, size_t size) {
   if (!data || size == 0)
     return NULL;
 
-  void *ptr = arena_alloc(a, size);
+  void *ptr = arena_alloc(arena, size);
   if (!ptr)
     return NULL;
 
   return arena_memcpy(ptr, data, size);
 }
 
-char *arena_sprintf(Arena *a, const char *format, ...) {
+char *arena_sprintf(Arena *arena, const char *format, ...) {
   va_list args, args_copy;
   va_start(args, format);
   va_copy(args_copy, args);
@@ -165,7 +165,7 @@ char *arena_sprintf(Arena *a, const char *format, ...) {
     return NULL;
   }
 
-  char *result = (char *)arena_alloc(a, n + 1);
+  char *result = (char *)arena_alloc(arena, n + 1);
 
   if (!result) {
     va_end(args);
