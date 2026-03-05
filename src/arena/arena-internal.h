@@ -1,5 +1,5 @@
 // Original work Copyright 2022 Alexey Kutepov <reximkut@gmail.com>
-// Modified work Copyright 2025 Savas Sahin <savashn@proton.me>
+// Modified work Copyright 2025-2026 Savas Sahin <savashn@proton.me>
 
 // Permission is hereby granted, free of charge, to any person obtaining
 // a copy of this software and associated documentation files (the
