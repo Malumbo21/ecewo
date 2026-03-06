@@ -227,6 +227,7 @@ if(ECEWO_BUILD_TESTS)
     endif()
   endfunction()
   
+  ecewo_test(arena)
   ecewo_test(async-middleware)
   ecewo_test(body-buffering)
   ecewo_test(body-streaming)
