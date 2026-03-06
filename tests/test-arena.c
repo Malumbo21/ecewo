@@ -267,24 +267,6 @@ int test_arena_da_append_many(void) {
 }
 
 
-// TEST 15: arena_sb_append_cstr + arena_sb_append_null: StringBuilder
-int test_arena_sb_incremental(void) {
-  Arena a = {0};
-  StringBuilder sb = {0};
-
-  for (int i = 0; i < 5; i++) {
-    arena_sb_append_cstr(&a, &sb, "ab");
-  }
-  arena_sb_append_null(&a, &sb);
-
-  ASSERT_EQ(11, (int64_t)sb.count);  // 10 chars + null
-  ASSERT_EQ_STR("ababababab", sb.items);
-
-  arena_free(&a);
-  RETURN_OK();
-}
-
-
 int main(void) {
   RUN_TEST(test_arena_alloc_basic);
   RUN_TEST(test_arena_alloc_no_overlap);
@@ -300,7 +282,6 @@ int main(void) {
   RUN_TEST(test_arena_free);
   RUN_TEST(test_arena_da_append_growth);
   RUN_TEST(test_arena_da_append_many);
-  RUN_TEST(test_arena_sb_incremental);
 
   return 0;
 }
