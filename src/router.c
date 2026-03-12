@@ -20,7 +20,7 @@
 // WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 #include "router.h"
-#include "route-trie.h"
+#include "route-table.h"
 #include "middleware.h"
 #include "server.h"
 #include "arena-internal.h"
@@ -193,7 +193,7 @@ static int dispatch(Arena *arena, uv_tcp_t *handle, http_context_t *ctx, client_
   if (res_out)
     *res_out = res;
 
-  if (!global_route_trie || !ctx->method) {
+  if (!route_table || !ctx->method) {
     set_header(res, "Content-Type", "text/plain");
     reply(res, 404, "404 Not Found", 13);
     return 0;
@@ -206,7 +206,7 @@ static int dispatch(Arena *arena, uv_tcp_t *handle, http_context_t *ctx, client_
   }
 
   route_match_t match;
-  if (!route_trie_match(global_route_trie, ctx->parser, &tok, &match, arena)) {
+  if (!route_table_match(route_table, ctx->parser, &tok, &match, arena)) {
     // OPTIONS preflight: give global middleware a chance (e.g. CORS)
     if (ctx->method_length == 7 && memcmp(ctx->method, "OPTIONS", 7) == 0) {
       MiddlewareInfo dummy = { NULL, 0, noop_route_handler };

@@ -121,13 +121,14 @@ if(NOT TARGET ecewo::ecewo)
     src/response.c
     src/router.c
     src/middleware.c
-    src/route-trie.c
+    src/route-table.c
     src/route-register.c
     src/spawn.c
     src/body.c
     src/utils/date-cache.c
     src/arena/arena.c
     src/arena/arena-pool.c
+    vendor/rax.c
   )
 
   if(ECEWO_BUILD_SHARED)
@@ -157,6 +158,7 @@ if(NOT TARGET ecewo::ecewo)
       ${CMAKE_CURRENT_SOURCE_DIR}/src
       ${CMAKE_CURRENT_SOURCE_DIR}/src/utils
       ${CMAKE_CURRENT_SOURCE_DIR}/src/arena
+      ${CMAKE_CURRENT_SOURCE_DIR}/vendor
       ${CMAKE_BINARY_DIR}/_deps/llhttp-src/include
   )
 
@@ -188,6 +190,49 @@ if(CMAKE_PROJECT_NAME STREQUAL PROJECT_NAME)
   message(STATUS "Target system: ${CMAKE_SYSTEM_NAME}")
   message(STATUS "Compiler: ${CMAKE_C_COMPILER_ID} ${CMAKE_C_COMPILER_VERSION}")
   message(STATUS "=================================")
+endif()
+
+# ---------------------------------------------------------------------------
+# Fuzz targets (libFuzzer, Clang only)
+#
+# Usage:
+#   cmake -B build-fuzz \
+#     -DECEWO_BUILD_FUZZ=ON \
+#     -DCMAKE_C_COMPILER=clang \
+#     -DCMAKE_BUILD_TYPE=Debug
+#   cmake --build build-fuzz --target fuzz-router
+#   mkdir -p fuzz/corpus && ./build-fuzz/fuzz-router fuzz/corpus -max_len=4096
+# ---------------------------------------------------------------------------
+option(ECEWO_BUILD_FUZZ "Build libFuzzer fuzz targets (requires Clang)" OFF)
+
+if(ECEWO_BUILD_FUZZ)
+  if(NOT CMAKE_C_COMPILER_ID MATCHES "Clang|AppleClang")
+    message(FATAL_ERROR
+      "ECEWO_BUILD_FUZZ requires Clang — libFuzzer is Clang-only.\n"
+      "Re-run with -DCMAKE_C_COMPILER=clang")
+  endif()
+
+  add_executable(fuzz-router fuzz/fuzz_router.c)
+
+  target_compile_options(fuzz-router PRIVATE
+    -fsanitize=fuzzer,address,undefined
+    -fno-omit-frame-pointer
+    -g
+  )
+
+  target_link_options(fuzz-router PRIVATE
+    -fsanitize=fuzzer,address,undefined
+  )
+
+  target_link_libraries(fuzz-router PRIVATE ecewo::ecewo)
+
+  target_include_directories(fuzz-router PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/arena
+    ${CMAKE_BINARY_DIR}/_deps/llhttp-src/include
+  )
+
+  message(STATUS "Fuzz target: fuzz-router")
 endif()
 
 if(ECEWO_BUILD_TESTS)
@@ -234,6 +279,8 @@ if(ECEWO_BUILD_TESTS)
   ecewo_test(blocking)
   ecewo_test(concurrent-request)
   ecewo_test(router)
+  ecewo_test(router-stress)
+  ecewo_test(router-edge)
   ecewo_test(context)
   ecewo_test(fire-and-forget)
   ecewo_test(headers)

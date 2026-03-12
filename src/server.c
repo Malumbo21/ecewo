@@ -23,7 +23,7 @@
 #include <signal.h>
 #include <inttypes.h>
 #include "server.h"
-#include "route-trie.h"
+#include "route-table.h"
 #include "middleware.h"
 #include "router.h"
 #include "arena-internal.h"
@@ -103,7 +103,7 @@ static struct {
   bool cleanup_done; // True once server_shutdown_cleanup() has run
 } ecewo_server = { 0 };
 
-route_trie_t *global_route_trie = NULL;
+route_table_t *route_table = NULL;
 
 static void client_free_internal(client_t *client) {
   if (!client)
@@ -530,10 +530,10 @@ void server_shutdown(void) {
 }
 
 static void router_cleanup(void) {
-  if (global_route_trie) {
-    // Middleware contexts will be cleaned up in route_trie_free
-    route_trie_free(global_route_trie);
-    global_route_trie = NULL;
+  if (route_table) {
+    // Middleware contexts will be cleaned up in route_table_free
+    route_table_free(route_table);
+    route_table = NULL;
   }
 
   reset_middleware();
@@ -698,11 +698,11 @@ static void on_signal(uv_signal_t *handle, int signum) {
 }
 
 static int router_init(void) {
-  if (global_route_trie)
+  if (route_table)
     return 0;
 
-  global_route_trie = route_trie_create();
-  if (!global_route_trie) {
+  route_table = route_table_create();
+  if (!route_table) {
     LOG_ERROR("Failed to create route trie");
     return 1;
   }

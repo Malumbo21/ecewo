@@ -4,3 +4,5 @@ build-asan-ubsan
 build-msan
 build-tsan
 build-valgrind
+build-fuzz
+fuzz/corpus

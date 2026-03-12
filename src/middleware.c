@@ -22,12 +22,11 @@
 #include <stdlib.h>
 #include <stdbool.h>
 #include "middleware.h"
-#include "route-trie.h"
+#include "route-table.h"
 #include "server.h"
 #include "logger.h"
 
-typedef struct
-{
+typedef struct {
   MiddlewareHandler *handlers;
   RequestHandler route_handler;
   uint16_t count;
