@@ -215,8 +215,35 @@ static int dispatch(Arena *arena, uv_tcp_t *handle, http_context_t *ctx, client_
       if (res->replied)
         return 0;
     }
-    set_header(res, "Content-Type", "text/plain");
-    reply(res, 404, "404 Not Found", 13);
+
+    uint8_t allowed = route_table_allowed_methods(route_table, &tok);
+    if (allowed) {
+      // Build "Allow" header value
+      // Order matches http_method_index_t enum
+      static const char *method_names[7] = {
+        "DELETE", "GET", "HEAD", "POST", "PUT", "OPTIONS", "PATCH"
+      };
+      char allow_buf[64];
+      size_t pos = 0;
+      for (int i = 0; i < 7; i++) {
+        if (allowed & (uint8_t)(1u << i)) {
+          if (pos > 0) {
+            allow_buf[pos++] = ',';
+            allow_buf[pos++] = ' ';
+          }
+          size_t len = strlen(method_names[i]);
+          memcpy(allow_buf + pos, method_names[i], len);
+          pos += len;
+        }
+      }
+      allow_buf[pos] = '\0';
+      set_header(res, "Allow", allow_buf);
+      set_header(res, "Content-Type", "text/plain");
+      reply(res, 405, "405 Method Not Allowed", 22);
+    } else {
+      set_header(res, "Content-Type", "text/plain");
+      reply(res, 404, "404 Not Found", 13);
+    }
     return 0;
   }
 

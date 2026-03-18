@@ -70,6 +70,9 @@ bool route_table_match(route_table_t *table,
                        route_match_t *match,
                        Arena *arena);
 
+uint8_t route_table_allowed_methods(route_table_t *table,
+                                    const tokenized_path_t *path);
+
 int route_table_add(route_table_t *table,
                     llhttp_method_t method,
                     const char *path,

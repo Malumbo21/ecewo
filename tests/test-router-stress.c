@@ -141,11 +141,12 @@ static int test_generic_fallback(void) {
 
 static int test_no_cross_method_match(void) {
   // Routes are per-method; GET routes must not match POST requests
+  // The path exists, GET is registered, so the response is 405, not 404
   MockResponse res = request(&(MockParams){
     .method = MOCK_POST,
     .path = "/a/123"
   });
-  ASSERT_EQ(404, res.status_code);
+  ASSERT_EQ(405, res.status_code);
   free_request(&res);
   RETURN_OK();
 }

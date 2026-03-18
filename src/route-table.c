@@ -407,6 +407,61 @@ static bool match_node(route_node_t *node,
 }
 
 // -------------------------------------------------------------------------
+// Method collection (for 405 Allow header)
+// -------------------------------------------------------------------------
+
+// Returns a bitmask of which method indices have a registered handler for
+// the given path (all methods, no backtracking needed — OR all branches).
+// Wildcard handlers at any node along the path also count.
+static uint8_t collect_methods(route_node_t *node,
+                               const tokenized_path_t *path,
+                               uint8_t seg_idx) {
+  if (!node)
+    return 0;
+
+  uint8_t mask = 0;
+
+  if (seg_idx == path->count) {
+    for (int i = 0; i < METHOD_COUNT; i++) {
+      if (node->handlers[i])
+        mask |= (uint8_t)(1u << i);
+      // Wildcard matches zero remaining segments too
+      if (node->wildcard_handlers[i])
+        mask |= (uint8_t)(1u << i);
+    }
+    return mask;
+  }
+
+  const path_segment_t *seg = &path->segments[seg_idx];
+
+  // Wildcard at this node matches all remaining segments
+  for (int i = 0; i < METHOD_COUNT; i++) {
+    if (node->wildcard_handlers[i])
+      mask |= (uint8_t)(1u << i);
+  }
+
+  // Literal child
+  if (node->children) {
+    void *child = raxFind(node->children, (unsigned char *)seg->start, seg->len);
+    if (child != raxNotFound)
+      mask |= collect_methods((route_node_t *)child, path, seg_idx + 1);
+  }
+
+  // Param child
+  if (node->param_child)
+    mask |= collect_methods(node->param_child, path, seg_idx + 1);
+
+  return mask;
+}
+
+uint8_t route_table_allowed_methods(route_table_t *table,
+                                    const tokenized_path_t *path) {
+  if (!table || !table->root || !path)
+    return 0;
+  return collect_methods(table->root, path, 0);
+}
+
+// -------------------------------------------------------------------------
 // Public API
 // -------------------------------------------------------------------------
 
