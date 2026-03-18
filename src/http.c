@@ -23,6 +23,7 @@
 #include <limits.h>
 #include <ctype.h>
 #include "http.h"
+#include "utils.h"
 #include "logger.h"
 
 #define MIN_BUFFER_SIZE 64
@@ -152,6 +153,7 @@ static void parse_query(Arena *arena, const char *query_start, size_t query_len,
       if (key) {
         memcpy(key, key_start, key_len);
         key[key_len] = '\0';
+        url_decode(key, true);
         query->items[query->count].key = key;
       }
 
@@ -160,6 +162,7 @@ static void parse_query(Arena *arena, const char *query_start, size_t query_len,
         if (value) {
           memcpy(value, eq + 1, val_len);
           value[val_len] = '\0';
+          url_decode(value, true);
           query->items[query->count].value = value;
         }
       } else {

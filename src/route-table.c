@@ -443,12 +443,12 @@ static int add_param_to_match(route_match_t *match,
 //     behaves identically to "/a/*".  Register "/a/:param/b" instead if
 //     you need to match the trailing literal.
 //
-//  TODO: Write an uri_decode fn to fix the thirth step below:
 //  3. Percent-encoded characters ("%2F", "%20", ...)
 //     The routing layer operates on the raw URL bytes as delivered by
 //     llhttp; it performs NO percent-decoding. "%2F" is three literal
 //     bytes, not a path separator. A route registered as "/a%2Fb" only
 //     matches requests with that exact byte sequence, never "/a/b".
+//     Param values are decoded after extraction (like decodeURIComponent).
 static bool match_dynamic_entry(const dynamic_entry_t *entry,
                                 const tokenized_path_t *req_path,
                                 route_match_t *match,

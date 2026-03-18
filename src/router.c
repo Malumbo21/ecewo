@@ -67,6 +67,7 @@ static int extract_url_params(Arena *arena, const route_match_t *match, request_
       return -1;
     arena_memcpy(value, value_sv->data, value_sv->len);
     value[value_sv->len] = '\0';
+    url_decode(value, false);
 
     url_params->items[i].key = key;
     url_params->items[i].value = value;

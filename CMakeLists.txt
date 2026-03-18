@@ -126,6 +126,7 @@ if(NOT TARGET ecewo::ecewo)
     src/spawn.c
     src/body.c
     src/utils/date-cache.c
+    src/utils/url-decode.c
     src/arena/arena.c
     src/arena/arena-pool.c
     vendor/rax.c
@@ -184,7 +185,7 @@ if(NOT TARGET ecewo::ecewo)
 endif()
 
 if(CMAKE_PROJECT_NAME STREQUAL PROJECT_NAME)
-  message(STATUS "=== ECEWO Build Configuration ===")
+  message(STATUS "====== Build Configuration ======")
   message(STATUS "Build type: ${CMAKE_BUILD_TYPE}")
   message(STATUS "Library type: ${ECEWO_BUILD_SHARED}")
   message(STATUS "Target system: ${CMAKE_SYSTEM_NAME}")
@@ -192,23 +193,12 @@ if(CMAKE_PROJECT_NAME STREQUAL PROJECT_NAME)
   message(STATUS "=================================")
 endif()
 
-# ---------------------------------------------------------------------------
-# Fuzz targets (libFuzzer, Clang only)
-#
-# Usage:
-#   cmake -B build-fuzz \
-#     -DECEWO_BUILD_FUZZ=ON \
-#     -DCMAKE_C_COMPILER=clang \
-#     -DCMAKE_BUILD_TYPE=Debug
-#   cmake --build build-fuzz --target fuzz-router
-#   mkdir -p fuzz/corpus && ./build-fuzz/fuzz-router fuzz/corpus -max_len=4096
-# ---------------------------------------------------------------------------
 option(ECEWO_BUILD_FUZZ "Build libFuzzer fuzz targets (requires Clang)" OFF)
 
 if(ECEWO_BUILD_FUZZ)
   if(NOT CMAKE_C_COMPILER_ID MATCHES "Clang|AppleClang")
     message(FATAL_ERROR
-      "ECEWO_BUILD_FUZZ requires Clang — libFuzzer is Clang-only.\n"
+      "ECEWO_BUILD_FUZZ requires Clang: libFuzzer is Clang-only.\n"
       "Re-run with -DCMAKE_C_COMPILER=clang")
   endif()
 
@@ -295,4 +285,5 @@ if(ECEWO_BUILD_TESTS)
   ecewo_test(sb)
   ecewo_test(task-parallel)
   ecewo_test(task)
+  ecewo_test(url-decode)
 endif()

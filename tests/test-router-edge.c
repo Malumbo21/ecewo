@@ -166,7 +166,7 @@ static int test_wildcard_mid_does_not_match_different_prefix(void) {
 }
 
 // -------------------------------------------------------------------------
-// Edge case 3; percent-encoded characters are opaque to the router
+// Edge case 3: percent-encoded characters are opaque to the router
 //
 // The routing layer never decodes percent-escaped sequences. "%2F" is the
 // three bytes '%', '2', 'F'; not a path separator. A registered route
@@ -175,6 +175,7 @@ static int test_wildcard_mid_does_not_match_different_prefix(void) {
 // -------------------------------------------------------------------------
 
 static int test_percent_encoded_matches_literal_bytes(void) {
+  // "/encoded%2Fpath" matches the route "/encoded%2Fpath" exactly.
   MockResponse res = request(&(MockParams){
     .method = MOCK_GET,
     .path   = "/encoded%2Fpath",
@@ -198,15 +199,15 @@ static int test_real_slash_does_not_match_encoded_route(void) {
 }
 
 static int test_other_percent_sequences_are_literal(void) {
-  // "/encoded%20path" is a single segment (no real slash) that is different
-  // from the registered "/encoded%2Fpath" key. It is caught by "/:" and the
-  // handler echoes the raw segment; NOT the "encoded" body of the static route.
+  // "/encoded%20path" is a single segment (routing is on raw bytes, so
+  // "%20" is not a separator). Caught by "/:"; the param value is decoded
+  // after extraction, so get_param() returns "encoded path".
   MockResponse res = request(&(MockParams){
     .method = MOCK_GET,
     .path   = "/encoded%20path",
   });
   ASSERT_EQ(200, res.status_code);
-  ASSERT_EQ_STR("encoded%20path", res.body); // bare_colon_handler echoes param
+  ASSERT_EQ_STR("encoded path", res.body);
   free_request(&res);
   RETURN_OK();
 }
