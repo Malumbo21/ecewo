@@ -27,11 +27,7 @@
 #include "rax.h"
 
 #define MAX_PATH_SEGMENTS 128
-// MAX_PATH_BUF must hold the canonical path plus 2 extra bytes:
-// a NULL separator and the method-index byte used as the rax key suffix.
-#define MAX_PATH_BUF 2050
 #define METHOD_COUNT 7
-#define INITIAL_DYNAMIC_CAP 8
 
 typedef enum {
   METHOD_INDEX_DELETE,
@@ -64,54 +60,61 @@ static int method_to_index(llhttp_method_t method) {
   }
 }
 
-typedef struct {
-  RequestHandler handler;
-  void *middleware_ctx;
-} static_val_t;
+// -------------------------------------------------------------------------
+// Segment-level radix tree
+// -------------------------------------------------------------------------
+//
+// Each route_node_t represents a position in the URL path. It can have:
+//
+//   children:   a rax mapping literal segment text -> child route_node_t*
+//   param_child: a single child for ':param' segments (captures one segment)
+//   wildcard_handlers: per-method handlers for '*' (matches all remaining)
+//   handlers:   per-method endpoint handlers (when this node terminates a route)
+//
+// Matching priority at each level: literal > param > wildcard.
+// The tree naturally backtracks when a greedy literal choice leads to a dead
+// end, ensuring the most specific route always wins.
+//
+// Edge-case behaviours (verified by tests/test-router-edge.c):
+//
+//  1. Bare ":" (empty param name)
+//     Route "/:": the param_name is "" (length 0).
+//     get_param(req, "") retrieves the value.
+//
+//  2. Wildcard not at the end of a pattern ("/prefix/*/suffix")
+//     During registration, when a '*' segment is encountered, the wildcard
+//     handler is stored on the current node and remaining segments are
+//     ignored.  Effectively "/a/*/b" behaves identically to "/a/*".
+//
+//  3. Percent-encoded characters ("%2F", "%20", ...)
+//     The routing layer operates on the raw URL bytes as delivered by
+//     llhttp; it performs NO percent-decoding. "%2F" is three literal
+//     bytes, not a path separator.
+//     Param values are decoded after extraction (like decodeURIComponent).
 
-typedef struct {
-  RequestHandler handler;
-  void *middleware_ctx;
-  path_segment_t *segs; // parsed pattern segments
-  uint8_t seg_count;
-  char *pattern_buf; // strdup'd pattern (owns segment memory)
-} dynamic_entry_t;
+typedef struct route_node {
+  rax *children;
+  struct route_node *param_child;
+  char *param_name;
+  size_t param_name_len;
 
-// Static routes live in one rax tree. The key is:
-//
-//   canonical_path  +  '\0'  +  method_index_byte
-//
-// Using a single tree (rather than one per method) lets routes that share a
-// URL prefix across methods share rax nodes, reducing memory and keeping the
-// structure simpler.
-//
-// Dynamic routes (those containing ':' or '*') are split into two sorted
-// arrays per method:
-//
-//   dyn_fixed:
-//      patterns without wildcards, kept in ascending seg_count
-//      order so the match loop can break early once
-//      seg_count > request depth.
-//
-//   dyn_wildcard:
-//      patterns that contain a '*' segment; these may match
-//      requests of any depth and are checked separately.
+  RequestHandler handlers[METHOD_COUNT];
+  void *middleware_ctx[METHOD_COUNT];
+
+  RequestHandler wildcard_handlers[METHOD_COUNT];
+  void *wildcard_middleware_ctx[METHOD_COUNT];
+} route_node_t;
 
 struct route_table {
-  rax *routes;
-
-  dynamic_entry_t **dyn_fixed[METHOD_COUNT];
-  size_t dyn_fixed_count[METHOD_COUNT];
-  size_t dyn_fixed_cap[METHOD_COUNT];
-
-  dynamic_entry_t **dyn_wildcard[METHOD_COUNT];
-  size_t dyn_wildcard_count[METHOD_COUNT];
-  size_t dyn_wildcard_cap[METHOD_COUNT];
-
+  route_node_t *root;
   size_t route_count;
 };
 
-// Called by router.c before route_table_match)
+// -------------------------------------------------------------------------
+// Tokenizers (shared with router.c)
+// -------------------------------------------------------------------------
+
+// Called by router.c before route_table_match
 int tokenize_path(Arena *arena, const char *path, size_t path_len, tokenized_path_t *result) {
   if (!path || !result)
     return -1;
@@ -176,55 +179,6 @@ int tokenize_path(Arena *arena, const char *path, size_t path_len, tokenized_pat
   return 0;
 }
 
-// Build a canonical path string from tokenized segments:
-//   ["users", "123"]  ->  "/users/123"
-//   []                ->  "/"
-//
-// Returns the number of path bytes written (without the trailing NULL)
-// buf must have at least buf_size bytes; the result is always NULL-terminated
-static size_t segs_to_path(const path_segment_t *segs, uint8_t count, char *buf, size_t buf_size) {
-  if (count == 0) {
-    buf[0] = '/';
-    buf[1] = '\0';
-    return 1;
-  }
-  size_t pos = 0;
-  for (uint8_t i = 0; i < count; i++) {
-    if (pos + 1 >= buf_size)
-      break;
-    buf[pos++] = '/';
-    size_t len = segs[i].len;
-    if (pos + len >= buf_size)
-      len = buf_size - pos - 1;
-    memcpy(buf + pos, segs[i].start, len);
-    pos += len;
-  }
-  buf[pos] = '\0';
-  return pos;
-}
-
-// Build the rax lookup key from tokenized request segments and a method index.
-//
-// Key layout:  canonical_path + '\0' + method_idx_byte
-//
-// Returns total key length (path_len + 2), or 0 if the canonical path would
-// exceed buf_size (the path is too long to match any registered route)
-static size_t build_static_key(const tokenized_path_t *tok, int method_idx, char *buf, size_t buf_size) {
-  size_t required = (tok->count == 0) ? 1 : 0;
-
-  for (uint8_t i = 0; i < tok->count; i++)
-    required += 1 + tok->segments[i].len;
-
-  // +2 for the NULL separator and method byte
-  if (required + 2 > buf_size)
-    return 0;
-
-  size_t path_len = segs_to_path(tok->segments, tok->count, buf, buf_size - 2);
-  buf[path_len] = '\0';
-  buf[path_len + 1] = (char)(unsigned char)method_idx;
-  return path_len + 2;
-}
-
 // Tokenize a route pattern at registration time
 // The caller owns *segs_out and *buf_out and must free both
 static int tokenize_pattern(const char *path,
@@ -283,78 +237,8 @@ static int tokenize_pattern(const char *path,
   return 0;
 }
 
-static bool pattern_has_wildcard(const path_segment_t *segs, uint8_t count) {
-  for (uint8_t i = 0; i < count; i++) {
-    if (segs[i].is_wildcard)
-      return true;
-  }
-  return false;
-}
-
 // -------------------------------------------------------------------------
-// Dynamic array helpers
-// -------------------------------------------------------------------------
-
-// TODO: When we have a server-level arena, we might think to use arena_da_ macros here
-
-// Look for an existing entry whose pattern_buf matches the given path string.
-// If found, replace its handler and middleware_ctx (freeing the old middleware),
-// free the candidate entry, and return true. Used to deduplicate dynamic
-// route registrations the same way raxInsert deduplicates static ones.
-static bool dyn_array_try_update(dynamic_entry_t **arr, size_t count, dynamic_entry_t *candidate) {
-  for (size_t i = 0; i < count; i++) {
-    if (strcmp(arr[i]->pattern_buf, candidate->pattern_buf) == 0) {
-      if (arr[i]->middleware_ctx)
-        free_middleware_info((MiddlewareInfo *)arr[i]->middleware_ctx);
-      arr[i]->handler = candidate->handler;
-      arr[i]->middleware_ctx = candidate->middleware_ctx;
-      free(candidate->segs);
-      free(candidate->pattern_buf);
-      free(candidate);
-      return true;
-    }
-  }
-  return false;
-}
-
-static int dyn_array_push(dynamic_entry_t ***arr, size_t *count, size_t *cap, dynamic_entry_t *entry) {
-  if (*count >= *cap) {
-    size_t new_cap = *cap == 0 ? INITIAL_DYNAMIC_CAP : *cap * 2;
-    dynamic_entry_t **new_arr = realloc(*arr, sizeof(dynamic_entry_t *) * new_cap);
-    if (!new_arr)
-      return -1;
-    *arr = new_arr;
-    *cap = new_cap;
-  }
-  (*arr)[(*count)++] = entry;
-  return 0;
-}
-
-// Insert entry into a sorted array (ascending by seg_count).
-// Uses insertion-sort, O(N) per call, acceptable for startup-time registration.
-static int dyn_array_insert_sorted(dynamic_entry_t ***arr, size_t *count, size_t *cap, dynamic_entry_t *entry) {
-  if (*count >= *cap) {
-    size_t new_cap = *cap == 0 ? INITIAL_DYNAMIC_CAP : *cap * 2;
-    dynamic_entry_t **new_arr = realloc(*arr, sizeof(dynamic_entry_t *) * new_cap);
-    if (!new_arr)
-      return -1;
-    *arr = new_arr;
-    *cap = new_cap;
-  }
-
-  // Shift entries with larger seg_count one position to the right
-  size_t pos = *count;
-  while (pos > 0 && (*arr)[pos - 1]->seg_count > entry->seg_count) {
-    (*arr)[pos] = (*arr)[pos - 1];
-    pos--;
-  }
-  (*arr)[pos] = entry;
-  (*count)++;
-  return 0;
-}
-
-// -------------------------------------------------------------------------
-// Param capture (shared by match_dynamic_entry)
+// Param capture
 // -------------------------------------------------------------------------
 
 static int add_param_to_match(route_match_t *match,
@@ -425,84 +309,235 @@ static int add_param_to_match(route_match_t *match,
 }
 
 // -------------------------------------------------------------------------
-// Dynamic route matching
+// Node management
 // -------------------------------------------------------------------------
 
-// Edge-case behaviours — verified by tests/test-router-edge.c:
-//
-//  1. Bare ":" (empty param name)
-//     Route "/:": the single segment has is_param=true and len=1, so the
-//     captured param name is pat.start+1 with length 0 — an empty string.
-//     get_param(req, "") retrieves the value.  The route is legal; callers
-//     should avoid it in practice because the empty key is easy to confuse.
-//
-//  2. Wildcard not at the end of a pattern ("/prefix/*/suffix")
-//     When match_dynamic_entry reaches a wildcard segment it returns true
-//     immediately, consuming the rest of the request path.  Any pattern
-//     segments AFTER the "*" are never evaluated.  Effectively "/a/*/b"
-//     behaves identically to "/a/*".  Register "/a/:param/b" instead if
-//     you need to match the trailing literal.
-//
-//  3. Percent-encoded characters ("%2F", "%20", ...)
-//     The routing layer operates on the raw URL bytes as delivered by
-//     llhttp; it performs NO percent-decoding. "%2F" is three literal
-//     bytes, not a path separator. A route registered as "/a%2Fb" only
-//     matches requests with that exact byte sequence, never "/a/b".
-//     Param values are decoded after extraction (like decodeURIComponent).
-static bool match_dynamic_entry(const dynamic_entry_t *entry,
-                                const tokenized_path_t *req_path,
-                                route_match_t *match,
-                                Arena *arena) {
-  const path_segment_t *pat = entry->segs;
-  uint8_t pat_count = entry->seg_count;
-  const path_segment_t *req = req_path->segments;
-  uint8_t req_count = req_path->count;
+static route_node_t *route_node_create(void) {
+  return calloc(1, sizeof(route_node_t));
+}
 
-  uint8_t saved_param_count = match->param_count;
-  uint8_t ri = 0;
+static void route_node_free_cb(void *data);
 
-  for (uint8_t pi = 0; pi < pat_count; pi++) {
-    if (pat[pi].is_wildcard) {
-      // '*' matches zero or more remaining segments
-      return true;
-    }
+static void route_node_free(route_node_t *node) {
+  if (!node)
+    return;
 
-    if (ri >= req_count) {
-      match->param_count = saved_param_count;
-      return false;
-    }
-
-    if (pat[pi].is_param) {
-      // Named param: key is segment text after ':', value is request segment
-      if (add_param_to_match(match, arena,
-                             pat[pi].start + 1, pat[pi].len - 1,
-                             req[ri].start, req[ri].len)
-          != 0) {
-        match->param_count = saved_param_count;
-        return false;
-      }
-      ri++;
-    } else {
-      // Exact segment match
-      if (pat[pi].len != req[ri].len || memcmp(pat[pi].start, req[ri].start, pat[pi].len) != 0) {
-        match->param_count = saved_param_count;
-        return false;
-      }
-      ri++;
-    }
+  for (int i = 0; i < METHOD_COUNT; i++) {
+    if (node->middleware_ctx[i])
+      free_middleware_info((MiddlewareInfo *)node->middleware_ctx[i]);
+    if (node->wildcard_middleware_ctx[i])
+      free_middleware_info((MiddlewareInfo *)node->wildcard_middleware_ctx[i]);
   }
 
-  if (ri != req_count) {
-    // Pattern ended but request still has remaining segments
-    match->param_count = saved_param_count;
+  free(node->param_name);
+  route_node_free(node->param_child);
+
+  if (node->children)
+    raxFreeWithCallback(node->children, route_node_free_cb);
+
+  free(node);
+}
+
+static void route_node_free_cb(void *data) {
+  route_node_free((route_node_t *)data);
+}
+
+// -------------------------------------------------------------------------
+// Tree matching (recursive with backtracking)
+// -------------------------------------------------------------------------
+
+// allow_wildcards controls whether wildcard handlers are considered.
+// route_table_match runs two passes: first without wildcards (so endpoint
+// matches via params always beat wildcard-zero matches), then with wildcards.
+static bool match_node(route_node_t *node,
+                       const tokenized_path_t *path,
+                       uint8_t seg_idx,
+                       int method_idx,
+                       route_match_t *match,
+                       Arena *arena,
+                       bool allow_wildcards) {
+  // All segments consumed
+  // Check for an endpoint handler
+  if (seg_idx == path->count) {
+    if (node->handlers[method_idx]) {
+      match->handler = node->handlers[method_idx];
+      match->middleware_ctx = node->middleware_ctx[method_idx];
+      return true;
+    }
+    // Wildcard matches zero remaining segments too
+    if (allow_wildcards && node->wildcard_handlers[method_idx]) {
+      match->handler = node->wildcard_handlers[method_idx];
+      match->middleware_ctx = node->wildcard_middleware_ctx[method_idx];
+      return true;
+    }
     return false;
   }
 
-  return true;
+  const path_segment_t *seg = &path->segments[seg_idx];
+
+  // 1. Literal child (highest priority)
+  if (node->children) {
+    void *child = raxFind(node->children, (unsigned char *)seg->start, seg->len);
+    if (child != raxNotFound) {
+      if (match_node((route_node_t *)child, path, seg_idx + 1, method_idx, match, arena, allow_wildcards))
+        return true;
+    }
+  }
+
+  // 2. Param child
+  if (node->param_child) {
+    uint8_t saved = match->param_count;
+    if (add_param_to_match(match, arena,
+                           node->param_name, node->param_name_len,
+                           seg->start, seg->len) == 0) {
+      if (match_node(node->param_child, path, seg_idx + 1, method_idx, match, arena, allow_wildcards))
+        return true;
+    }
+    match->param_count = saved;
+  }
+
+  // 3. Wildcard (matches all remaining segments)
+  if (allow_wildcards && node->wildcard_handlers[method_idx]) {
+    match->handler = node->wildcard_handlers[method_idx];
+    match->middleware_ctx = node->wildcard_middleware_ctx[method_idx];
+    return true;
+  }
+
+  return false;
 }
 
-// TODO: Use radix-tree also for dynamic paths
-// The current implementation uses it only for static paths
+// -------------------------------------------------------------------------
+// Public API
+// -------------------------------------------------------------------------
+
+route_table_t *route_table_create(void) {
+  route_table_t *table = calloc(1, sizeof(route_table_t));
+  if (!table)
+    return NULL;
+  table->root = route_node_create();
+  if (!table->root) {
+    free(table);
+    return NULL;
+  }
+  return table;
+}
+
+int route_table_add(route_table_t *table,
+                    llhttp_method_t method,
+                    const char *path,
+                    RequestHandler handler,
+                    void *middleware_ctx) {
+  if (!table || !path || !handler)
+    return -1;
+
+  int method_idx = method_to_index(method);
+  if (method_idx < 0) {
+    LOG_DEBUG("Unsupported HTTP method: %d", method);
+    return -1;
+  }
+
+  path_segment_t *segs;
+  uint8_t seg_count;
+  char *pattern_buf;
+
+  if (tokenize_pattern(path, &segs, &seg_count, &pattern_buf) != 0)
+    return -1;
+
+  route_node_t *node = table->root;
+
+  for (uint8_t i = 0; i < seg_count; i++) {
+    if (segs[i].is_wildcard) {
+      // '*' consumes all remaining segments; anything after it is ignored
+      if (node->wildcard_middleware_ctx[method_idx])
+        free_middleware_info((MiddlewareInfo *)node->wildcard_middleware_ctx[method_idx]);
+      node->wildcard_handlers[method_idx] = handler;
+      node->wildcard_middleware_ctx[method_idx] = middleware_ctx;
+      free(segs);
+      free(pattern_buf);
+      table->route_count++;
+      return 0;
+    }
+
+    if (segs[i].is_param) {
+      size_t name_len = segs[i].len - 1;
+
+      if (!node->param_child) {
+        node->param_child = route_node_create();
+        if (!node->param_child) {
+          free(segs);
+          free(pattern_buf);
+          return -1;
+        }
+        node->param_name = malloc(name_len + 1);
+        if (!node->param_name) {
+          route_node_free(node->param_child);
+          node->param_child = NULL;
+          free(segs);
+          free(pattern_buf);
+          return -1;
+        }
+        memcpy(node->param_name, segs[i].start + 1, name_len);
+        node->param_name[name_len] = '\0';
+        node->param_name_len = name_len;
+      } else if (node->param_name_len != name_len ||
+                 memcmp(node->param_name, segs[i].start + 1, name_len) != 0) {
+        LOG_ERROR("Param name conflict: ':%.*s' vs ':%.*s' at same position in '%s'",
+                  (int)name_len, segs[i].start + 1,
+                  (int)node->param_name_len, node->param_name, path);
+        free(segs);
+        free(pattern_buf);
+        return -1;
+      }
+      node = node->param_child;
+
+    } else {
+      // Literal segment: look up or create child in rax
+      if (!node->children) {
+        node->children = raxNew();
+        if (!node->children) {
+          free(segs);
+          free(pattern_buf);
+          return -1;
+        }
+      }
+
+      void *child = raxFind(node->children,
+                            (unsigned char *)segs[i].start, segs[i].len);
+      if (child == raxNotFound) {
+        route_node_t *new_child = route_node_create();
+        if (!new_child) {
+          free(segs);
+          free(pattern_buf);
+          return -1;
+        }
+        void *old = NULL;
+        if (!raxInsert(node->children,
+                       (unsigned char *)segs[i].start, segs[i].len,
+                       new_child, &old) && !old) {
+          route_node_free(new_child);
+          free(segs);
+          free(pattern_buf);
+          return -1;
+        }
+        node = new_child;
+      } else {
+        node = (route_node_t *)child;
+      }
+    }
+  }
+
+  // Set endpoint handler (free old middleware if re-registering)
+  if (node->middleware_ctx[method_idx])
+    free_middleware_info((MiddlewareInfo *)node->middleware_ctx[method_idx]);
+  node->handlers[method_idx] = handler;
+  node->middleware_ctx[method_idx] = middleware_ctx;
+
+  free(segs);
+  free(pattern_buf);
+  table->route_count++;
+  return 0;
+}
+
 bool route_table_match(route_table_t *table,
                        llhttp_t *parser,
                        const tokenized_path_t *tokenized_path,
@@ -523,215 +558,22 @@ bool route_table_match(route_table_t *table,
   match->params = NULL;
   match->param_capacity = MAX_INLINE_PARAMS;
 
-  // Build rax key: canonical_path + NULL + method_idx_byte
-  char key_buf[MAX_PATH_BUF];
-  size_t key_len = build_static_key(tokenized_path, method_idx,
-                                    key_buf, sizeof(key_buf));
-  // Path too long to match any registered route
-  if (key_len == 0)
+  if (!table->root)
     return false;
 
-  // 1. Exact (static) lookup: O(key_len)
-  if (table->routes) {
-    void *data = raxFind(table->routes, (unsigned char *)key_buf, key_len);
-    if (data != raxNotFound) {
-      static_val_t *val = (static_val_t *)data;
-      match->handler = val->handler;
-      match->middleware_ctx = val->middleware_ctx;
-      return true;
-    }
-  }
+  // Pass 1: endpoints only (no wildcards): ensures param endpoint matches
+  // always beat wildcard-zero matches at a different tree branch.
+  if (match_node(table->root, tokenized_path, 0, method_idx, match, arena, false))
+    return true;
 
-  uint8_t req_count = tokenized_path->count;
-
-  // 2. Fixed dynamic routes (no wildcards), sorted by seg_count ascending.
-  //    Break as soon as seg_count exceeds the request depth; all subsequent
-  //    entries are also deeper, so they cannot match.
-  for (size_t i = 0; i < table->dyn_fixed_count[method_idx]; i++) {
-    dynamic_entry_t *e = table->dyn_fixed[method_idx][i];
-    if (e->seg_count > req_count)
-      break;
-    if (e->seg_count < req_count)
-      continue;
-    if (match_dynamic_entry(e, tokenized_path, match, arena)) {
-      match->handler = e->handler;
-      match->middleware_ctx = e->middleware_ctx;
-      return true;
-    }
-  }
-
-  // 3. Wildcard dynamic routes (may match any request depth)
-  for (size_t i = 0; i < table->dyn_wildcard_count[method_idx]; i++) {
-    dynamic_entry_t *e = table->dyn_wildcard[method_idx][i];
-    if (match_dynamic_entry(e, tokenized_path, match, arena)) {
-      match->handler = e->handler;
-      match->middleware_ctx = e->middleware_ctx;
-      return true;
-    }
-  }
-
-  return false;
-}
-
-int route_table_add(route_table_t *table,
-                    llhttp_method_t method,
-                    const char *path,
-                    RequestHandler handler,
-                    void *middleware_ctx) {
-  if (!table || !path || !handler)
-    return -1;
-
-  int method_idx = method_to_index(method);
-  if (method_idx < 0) {
-    LOG_DEBUG("Unsupported HTTP method: %d", method);
-    return -1;
-  }
-
-  // Tokenize the path for both the canonical key and segment analysis
-  path_segment_t *segs;
-  uint8_t seg_count;
-  char *pattern_buf;
-
-  if (tokenize_pattern(path, &segs, &seg_count, &pattern_buf) != 0)
-    return -1;
-
-  bool is_dynamic = false;
-  for (uint8_t i = 0; i < seg_count; i++) {
-    if (segs[i].is_param || segs[i].is_wildcard) {
-      is_dynamic = true;
-      break;
-    }
-  }
-
-  if (!is_dynamic) {
-    // Static route: insert into rax
-    if (!table->routes) {
-      table->routes = raxNew();
-      if (!table->routes) {
-        free(segs);
-        free(pattern_buf);
-        return -1;
-      }
-    }
-
-    static_val_t *val = malloc(sizeof(static_val_t));
-    if (!val) {
-      free(segs);
-      free(pattern_buf);
-      return -1;
-    }
-    val->handler = handler;
-    val->middleware_ctx = middleware_ctx;
-
-    // Build the canonical key: normalized_path + NULL + method_idx_byte
-    char key_buf[MAX_PATH_BUF];
-    size_t path_len = segs_to_path(segs, seg_count, key_buf, sizeof(key_buf) - 2);
-    key_buf[path_len] = '\0';
-    key_buf[path_len + 1] = (char)(unsigned char)method_idx;
-    size_t key_len = path_len + 2;
-
-    free(segs);
-    free(pattern_buf);
-
-    void *old_val = NULL;
-    int ret = raxInsert(table->routes, (unsigned char *)key_buf, key_len, val, &old_val);
-
-    if (ret == 0 && old_val == NULL) {
-      free(val);
-      return -1;
-    }
-
-    if (old_val) {
-      // A previous registration existed for this path+method; free the old one
-      static_val_t *old = (static_val_t *)old_val;
-      if (old->middleware_ctx)
-        free_middleware_info((MiddlewareInfo *)old->middleware_ctx);
-      free(old);
-    }
-
-  } else {
-    // Dynamic route: store with segments for pattern matching
-    dynamic_entry_t *entry = malloc(sizeof(dynamic_entry_t));
-    if (!entry) {
-      free(segs);
-      free(pattern_buf);
-      return -1;
-    }
-    entry->handler = handler;
-    entry->middleware_ctx = middleware_ctx;
-    entry->segs = segs;
-    entry->seg_count = seg_count;
-    entry->pattern_buf = pattern_buf;
-
-    int ret;
-    if (pattern_has_wildcard(segs, seg_count)) {
-      // Wildcard routes: append, checked against any request depth
-      if (dyn_array_try_update(table->dyn_wildcard[method_idx],
-                               table->dyn_wildcard_count[method_idx], entry))
-        return 0;
-      ret = dyn_array_push(&table->dyn_wildcard[method_idx],
-                           &table->dyn_wildcard_count[method_idx],
-                           &table->dyn_wildcard_cap[method_idx],
-                           entry);
-    } else {
-      // Fixed-depth parametric routes: insert sorted by seg_count
-      if (dyn_array_try_update(table->dyn_fixed[method_idx],
-                               table->dyn_fixed_count[method_idx], entry))
-        return 0;
-      ret = dyn_array_insert_sorted(&table->dyn_fixed[method_idx],
-                                    &table->dyn_fixed_count[method_idx],
-                                    &table->dyn_fixed_cap[method_idx],
-                                    entry);
-    }
-
-    if (ret != 0) {
-      free(entry->segs);
-      free(entry->pattern_buf);
-      free(entry);
-      return -1;
-    }
-  }
-
-  table->route_count++;
-  return 0;
-}
-
-route_table_t *route_table_create(void) {
-  // rax and dynamic arrays are allocated lazily on first route_table_add
-  return calloc(1, sizeof(route_table_t));
-}
-
-static void free_static_val_cb(void *data) {
-  static_val_t *val = (static_val_t *)data;
-  if (val->middleware_ctx)
-    free_middleware_info((MiddlewareInfo *)val->middleware_ctx);
-  free(val);
-}
-
-static void free_dynamic_entry(dynamic_entry_t *entry) {
-  if (entry->middleware_ctx)
-    free_middleware_info((MiddlewareInfo *)entry->middleware_ctx);
-  free(entry->segs);
-  free(entry->pattern_buf);
-  free(entry);
+  // Pass 2: allow wildcard fallback
+  return match_node(table->root, tokenized_path, 0, method_idx, match, arena, true);
 }
 
 void route_table_free(route_table_t *table) {
   if (!table)
     return;
 
-  if (table->routes)
-    raxFreeWithCallback(table->routes, free_static_val_cb);
-
-  for (int i = 0; i < METHOD_COUNT; i++) {
-    for (size_t j = 0; j < table->dyn_fixed_count[i]; j++)
-      free_dynamic_entry(table->dyn_fixed[i][j]);
-    free(table->dyn_fixed[i]);
-
-    for (size_t j = 0; j < table->dyn_wildcard_count[i]; j++)
-      free_dynamic_entry(table->dyn_wildcard[i][j]);
-    free(table->dyn_wildcard[i]);
-  }
-
+  route_node_free(table->root);
   free(table);
 }
