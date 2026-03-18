@@ -7,14 +7,16 @@ on:
       - 'src/**'
       - 'include/**'
       - 'CMakeLists.txt'
-      - 'test/**'
+      - 'tests/**'
+      - 'vendor/**'
   pull_request:
     branches: [ main ]
     paths:
       - 'src/**'
       - 'include/**'
       - 'CMakeLists.txt'
-      - 'test/**'
+      - 'tests/**'
+      - 'vendor/**'
 
 env:
   BUILD_TYPE: Release

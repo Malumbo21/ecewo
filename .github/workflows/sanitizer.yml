@@ -8,6 +8,7 @@ on:
       - 'include/**'
       - 'CMakeLists.txt'
       - 'tests/**'
+      - 'vendor/**'
   pull_request:
     branches: [ main ]
     paths:
@@ -15,6 +16,7 @@ on:
       - 'include/**'
       - 'CMakeLists.txt'
       - 'tests/**'
+      - 'vendor/**'
 
 jobs:
   sanitizers:
