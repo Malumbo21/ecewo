@@ -95,14 +95,16 @@ static int method_to_index(llhttp_method_t method) {
 typedef struct route_node {
   rax *children;
   struct route_node *param_child;
-  char *param_name;
-  size_t param_name_len;
 
   RequestHandler handlers[METHOD_COUNT];
   void *middleware_ctx[METHOD_COUNT];
+  char **route_param_names[METHOD_COUNT];
+  uint8_t route_param_count[METHOD_COUNT];
 
   RequestHandler wildcard_handlers[METHOD_COUNT];
   void *wildcard_middleware_ctx[METHOD_COUNT];
+  char **wildcard_param_names[METHOD_COUNT];
+  uint8_t wildcard_param_count[METHOD_COUNT];
 } route_node_t;
 
 struct route_table {
@@ -327,9 +329,19 @@ static void route_node_free(route_node_t *node) {
       free_middleware_info((MiddlewareInfo *)node->middleware_ctx[i]);
     if (node->wildcard_middleware_ctx[i])
       free_middleware_info((MiddlewareInfo *)node->wildcard_middleware_ctx[i]);
+
+    if (node->route_param_names[i]) {
+      for (uint8_t j = 0; j < node->route_param_count[i]; j++)
+        free(node->route_param_names[i][j]);
+      free(node->route_param_names[i]);
+    }
+    if (node->wildcard_param_names[i]) {
+      for (uint8_t j = 0; j < node->wildcard_param_count[i]; j++)
+        free(node->wildcard_param_names[i][j]);
+      free(node->wildcard_param_names[i]);
+    }
   }
 
-  free(node->param_name);
   route_node_free(node->param_child);
 
   if (node->children)
@@ -349,25 +361,31 @@ static void route_node_free_cb(void *data) {
 // allow_wildcards controls whether wildcard handlers are considered.
 // route_table_match runs two passes: first without wildcards (so endpoint
 // matches via params always beat wildcard-zero matches), then with wildcards.
+//
+// leaf_out: on success, set to the node that owns the matched handler so the
+// caller can retrieve the per-route param name table.
 static bool match_node(route_node_t *node,
                        const tokenized_path_t *path,
                        uint8_t seg_idx,
                        int method_idx,
                        route_match_t *match,
                        Arena *arena,
-                       bool allow_wildcards) {
+                       bool allow_wildcards,
+                       route_node_t **leaf_out) {
   // All segments consumed
   // Check for an endpoint handler
   if (seg_idx == path->count) {
     if (node->handlers[method_idx]) {
       match->handler = node->handlers[method_idx];
       match->middleware_ctx = node->middleware_ctx[method_idx];
+      *leaf_out = node;
       return true;
     }
     // Wildcard matches zero remaining segments too
     if (allow_wildcards && node->wildcard_handlers[method_idx]) {
       match->handler = node->wildcard_handlers[method_idx];
       match->middleware_ctx = node->wildcard_middleware_ctx[method_idx];
+      *leaf_out = node;
       return true;
     }
     return false;
@@ -379,7 +397,7 @@ static bool match_node(route_node_t *node,
   if (node->children) {
     void *child = raxFind(node->children, (unsigned char *)seg->start, seg->len);
     if (child != raxNotFound) {
-      if (match_node((route_node_t *)child, path, seg_idx + 1, method_idx, match, arena, allow_wildcards))
+      if (match_node((route_node_t *)child, path, seg_idx + 1, method_idx, match, arena, allow_wildcards, leaf_out))
         return true;
     }
   }
@@ -388,9 +406,9 @@ static bool match_node(route_node_t *node,
   if (node->param_child) {
     uint8_t saved = match->param_count;
     if (add_param_to_match(match, arena,
-                           node->param_name, node->param_name_len,
+                           NULL, 0,
                            seg->start, seg->len) == 0) {
-      if (match_node(node->param_child, path, seg_idx + 1, method_idx, match, arena, allow_wildcards))
+      if (match_node(node->param_child, path, seg_idx + 1, method_idx, match, arena, allow_wildcards, leaf_out))
         return true;
     }
     match->param_count = saved;
@@ -400,6 +418,7 @@ static bool match_node(route_node_t *node,
   if (allow_wildcards && node->wildcard_handlers[method_idx]) {
     match->handler = node->wildcard_handlers[method_idx];
     match->middleware_ctx = node->wildcard_middleware_ctx[method_idx];
+    *leaf_out = node;
     return true;
   }
 
@@ -410,8 +429,8 @@ static bool match_node(route_node_t *node,
 // Method collection (for 405 Allow header)
 // -------------------------------------------------------------------------
 
-// Returns a bitmask of which method indices have a registered handler for
-// the given path (all methods, no backtracking needed — OR all branches).
+// Returns a bitmask of which method indices have
+// a registered handler for the given path.
 // Wildcard handlers at any node along the path also count.
 static uint8_t collect_methods(route_node_t *node,
                                const tokenized_path_t *path,
@@ -500,13 +519,48 @@ int route_table_add(route_table_t *table,
 
   route_node_t *node = table->root;
 
+  const char *collected_names[MAX_PATH_SEGMENTS];
+  size_t collected_name_lens[MAX_PATH_SEGMENTS];
+  uint8_t collected_count = 0;
+
   for (uint8_t i = 0; i < seg_count; i++) {
     if (segs[i].is_wildcard) {
       // '*' consumes all remaining segments; anything after it is ignored
+      // Store the param names collected so far for this wildcard handler.
+      char **names = NULL;
+      if (collected_count > 0) {
+        names = malloc(sizeof(char *) * collected_count);
+        if (!names) {
+          free(segs);
+          free(pattern_buf);
+          return -1;
+        }
+        for (uint8_t j = 0; j < collected_count; j++) {
+          names[j] = malloc(collected_name_lens[j] + 1);
+          if (!names[j]) {
+            for (uint8_t k = 0; k < j; k++) free(names[k]);
+            free(names);
+            free(segs);
+            free(pattern_buf);
+            return -1;
+          }
+          memcpy(names[j], collected_names[j], collected_name_lens[j]);
+          names[j][collected_name_lens[j]] = '\0';
+        }
+      }
+
       if (node->wildcard_middleware_ctx[method_idx])
         free_middleware_info((MiddlewareInfo *)node->wildcard_middleware_ctx[method_idx]);
+      // Free old wildcard param names if re-registering
+      if (node->wildcard_param_names[method_idx]) {
+        for (uint8_t j = 0; j < node->wildcard_param_count[method_idx]; j++)
+          free(node->wildcard_param_names[method_idx][j]);
+        free(node->wildcard_param_names[method_idx]);
+      }
       node->wildcard_handlers[method_idx] = handler;
       node->wildcard_middleware_ctx[method_idx] = middleware_ctx;
+      node->wildcard_param_names[method_idx] = names;
+      node->wildcard_param_count[method_idx] = collected_count;
       free(segs);
       free(pattern_buf);
       table->route_count++;
@@ -514,7 +568,9 @@ int route_table_add(route_table_t *table,
     }
 
     if (segs[i].is_param) {
-      size_t name_len = segs[i].len - 1;
+      collected_names[collected_count] = segs[i].start + 1; // skip ':'
+      collected_name_lens[collected_count] = segs[i].len - 1;
+      collected_count++;
 
       if (!node->param_child) {
         node->param_child = route_node_create();
@@ -523,30 +579,10 @@ int route_table_add(route_table_t *table,
           free(pattern_buf);
           return -1;
         }
-        node->param_name = malloc(name_len + 1);
-        if (!node->param_name) {
-          route_node_free(node->param_child);
-          node->param_child = NULL;
-          free(segs);
-          free(pattern_buf);
-          return -1;
-        }
-        memcpy(node->param_name, segs[i].start + 1, name_len);
-        node->param_name[name_len] = '\0';
-        node->param_name_len = name_len;
-      } else if (node->param_name_len != name_len ||
-                 memcmp(node->param_name, segs[i].start + 1, name_len) != 0) {
-        LOG_ERROR("Param name conflict: ':%.*s' vs ':%.*s' at same position in '%s'",
-                  (int)name_len, segs[i].start + 1,
-                  (int)node->param_name_len, node->param_name, path);
-        free(segs);
-        free(pattern_buf);
-        return -1;
       }
       node = node->param_child;
 
     } else {
-      // Literal segment: look up or create child in rax
       if (!node->children) {
         node->children = raxNew();
         if (!node->children) {
@@ -581,11 +617,39 @@ int route_table_add(route_table_t *table,
     }
   }
 
-  // Set endpoint handler (free old middleware if re-registering)
+  char **names = NULL;
+  if (collected_count > 0) {
+    names = malloc(sizeof(char *) * collected_count);
+    if (!names) {
+      free(segs);
+      free(pattern_buf);
+      return -1;
+    }
+    for (uint8_t j = 0; j < collected_count; j++) {
+      names[j] = malloc(collected_name_lens[j] + 1);
+      if (!names[j]) {
+        for (uint8_t k = 0; k < j; k++) free(names[k]);
+        free(names);
+        free(segs);
+        free(pattern_buf);
+        return -1;
+      }
+      memcpy(names[j], collected_names[j], collected_name_lens[j]);
+      names[j][collected_name_lens[j]] = '\0';
+    }
+  }
+
   if (node->middleware_ctx[method_idx])
     free_middleware_info((MiddlewareInfo *)node->middleware_ctx[method_idx]);
+  if (node->route_param_names[method_idx]) {
+    for (uint8_t j = 0; j < node->route_param_count[method_idx]; j++)
+      free(node->route_param_names[method_idx][j]);
+    free(node->route_param_names[method_idx]);
+  }
   node->handlers[method_idx] = handler;
   node->middleware_ctx[method_idx] = middleware_ctx;
+  node->route_param_names[method_idx] = names;
+  node->route_param_count[method_idx] = collected_count;
 
   free(segs);
   free(pattern_buf);
@@ -616,13 +680,32 @@ bool route_table_match(route_table_t *table,
   if (!table->root)
     return false;
 
+  route_node_t *leaf = NULL;
+
   // Pass 1: endpoints only (no wildcards): ensures param endpoint matches
   // always beat wildcard-zero matches at a different tree branch.
-  if (match_node(table->root, tokenized_path, 0, method_idx, match, arena, false))
-    return true;
+  if (!match_node(table->root, tokenized_path, 0, method_idx, match, arena, false, &leaf)) {
+    // Pass 2: allow wildcard fallback
+    if (!match_node(table->root, tokenized_path, 0, method_idx, match, arena, true, &leaf))
+      return false;
+  }
 
-  // Pass 2: allow wildcard fallback
-  return match_node(table->root, tokenized_path, 0, method_idx, match, arena, true);
+  // Fill in the deferred param key names from the winning leaf's name table.
+  if (leaf && match->param_count > 0) {
+    bool is_wildcard = (match->handler == leaf->wildcard_handlers[method_idx]);
+    char **names = is_wildcard
+                   ? leaf->wildcard_param_names[method_idx]
+                   : leaf->route_param_names[method_idx];
+    if (names) {
+      param_match_t *arr = match->params ? match->params : match->inline_params;
+      for (uint8_t i = 0; i < match->param_count; i++) {
+        arr[i].key.data = names[i];
+        arr[i].key.len = strlen(names[i]);
+      }
+    }
+  }
+
+  return true;
 }
 
 void route_table_free(route_table_t *table) {
