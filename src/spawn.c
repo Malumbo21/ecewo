@@ -39,8 +39,6 @@ static void spawn_cleanup_cb(uv_handle_t *handle) {
   spawn_t *t = (spawn_t *)handle->data;
   if (t)
     free(t);
-
-  decrement_async_work();
 }
 
 static void spawn_async_cb(uv_async_t *handle) {
@@ -90,8 +88,6 @@ int spawn(void *context, spawn_handler_t work_fn, spawn_handler_t done_fn) {
   task->work_fn = work_fn;
   task->result_fn = done_fn;
 
-  increment_async_work();
-
   int result = uv_queue_work(
       get_loop(),
       &task->work,
@@ -99,7 +95,6 @@ int spawn(void *context, spawn_handler_t work_fn, spawn_handler_t done_fn) {
       spawn_after_work_cb);
 
   if (result != 0) {
-    decrement_async_work();
     uv_close((uv_handle_t *)&task->async_send, NULL);
     free(task);
     return result;
@@ -128,8 +123,6 @@ static void spawn_http_cleanup_cb(uv_handle_t *handle) {
       client_unref(t->client);
     free(t);
   }
-
-  decrement_async_work();
 }
 
 static void spawn_http_async_cb(uv_async_t *handle) {
@@ -209,8 +202,6 @@ int spawn_http(Res *res, void *context, spawn_handler_t work_fn, spawn_done_t do
     client_ref(task->client);
   }
 
-  increment_async_work();
-
   int result = uv_queue_work(
       get_loop(),
       &task->work,
@@ -218,7 +209,6 @@ int spawn_http(Res *res, void *context, spawn_handler_t work_fn, spawn_done_t do
       spawn_http_after_work_cb);
 
   if (result != 0) {
-    decrement_async_work();
     uv_close((uv_handle_t *)&task->async_send, NULL);
     if (task->client)
       client_unref(task->client);

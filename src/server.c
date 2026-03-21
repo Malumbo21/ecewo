@@ -83,24 +83,22 @@ static struct {
   bool running;
   bool shutdown_requested;
   int active_connections;
-  atomic_uint_fast16_t pending_async_work;
+  atomic_uint_fast16_t async_work_count;
 
   uv_loop_t *loop;
   uv_tcp_t *server;
   uv_signal_t sigint_handle;
   uv_signal_t sigterm_handle;
   uv_async_t shutdown_async;
+  uv_async_t async_work_handle; // unreffed while idle; ref'd while async_work_count > 0
 
   shutdown_callback_t shutdown_callback;
 
   client_t *client_list_head;
   uv_timer_t *cleanup_timer;
+  uv_timer_t *force_close_timer;
 
   bool server_closed;
-  // True while server_run()'s uv_run() is executing. Used by server_shutdown()
-  // to avoid running a nested event loop from inside an I/O callback.
-  bool dispatching;
-  bool cleanup_done; // True once server_shutdown_cleanup() has run
 } ecewo_server = { 0 };
 
 route_table_t *route_table = NULL;
@@ -162,6 +160,16 @@ static void on_client_closed(uv_handle_t *handle) {
   client->valid = false;
 
   client_unref(client);
+
+  // If shutdown is in progress and this was the last connection,
+  // cancel the force-close timer early so the loop can exit.
+  if (ecewo_server.shutdown_requested
+      && ecewo_server.active_connections == 0
+      && ecewo_server.force_close_timer) {
+    uv_timer_stop(ecewo_server.force_close_timer);
+    uv_close((uv_handle_t *)ecewo_server.force_close_timer, (uv_close_cb)free);
+    ecewo_server.force_close_timer = NULL;
+  }
 }
 
 // Called when the write-side shutdown completes or is cancelled.
@@ -282,42 +290,6 @@ static void stop_cleanup_timer(void) {
   }
 }
 
-void increment_async_work(void) {
-  uint_fast16_t new_val = atomic_fetch_add_explicit(
-                              &ecewo_server.pending_async_work,
-                              1,
-                              memory_order_relaxed)
-      + 1;
-
-#ifdef ECEWO_DEBUG
-  LOG_DEBUG("Async work count: %" PRIuFAST16, new_val);
-#endif
-
-  (void)new_val;
-}
-
-void decrement_async_work(void) {
-  uint_fast16_t prev = atomic_fetch_sub_explicit(
-      &ecewo_server.pending_async_work,
-      1,
-      memory_order_acq_rel);
-
-  if (prev == 0) {
-    LOG_ERROR("Async work counter underflow!");
-    atomic_store_explicit(&ecewo_server.pending_async_work, 0, memory_order_release);
-    return;
-  }
-
-  if (prev == 1 && ecewo_server.shutdown_requested) {
-    uv_async_send(&ecewo_server.shutdown_async);
-  }
-}
-
-int get_pending_async_work(void) {
-  return (int)atomic_load_explicit(
-      &ecewo_server.pending_async_work,
-      memory_order_acquire);
-}
 
 static int client_connection_init(client_t *client) {
   if (!client)
@@ -412,93 +384,62 @@ static void on_server_closed(uv_handle_t *handle) {
   }
 }
 
-// Heavy connection-teardown and loop-drain sequence.
-// Must only be called from outside the event loop (i.e. after the outer
-// uv_run() in server_run() has returned), so that close callbacks do not
-// fire while an I/O callback still holds pointers to the client handle.
-static void server_shutdown_cleanup(void) {
-  if (ecewo_server.cleanup_done)
+static void on_async_work_noop(uv_async_t *handle) {
+  (void)handle;
+}
+
+void increment_async_work(void) {
+  uint_fast16_t prev = atomic_fetch_add_explicit(
+      &ecewo_server.async_work_count, 1, memory_order_relaxed);
+  if (prev == 0)
+    uv_ref((uv_handle_t *)&ecewo_server.async_work_handle);
+}
+
+void decrement_async_work(void) {
+  uint_fast16_t prev = atomic_fetch_sub_explicit(
+      &ecewo_server.async_work_count, 1, memory_order_acq_rel);
+  if (prev == 0) {
+    LOG_ERROR("Async work counter underflow!");
+    atomic_store_explicit(&ecewo_server.async_work_count, 0, memory_order_release);
     return;
-  ecewo_server.cleanup_done = true;
-
-  // APPLICATION-LEVEL GRACEFUL SHUTDOWN
-  uint64_t start = uv_now(ecewo_server.loop);
-
-  // Wait for external async work
-  while (get_pending_async_work() > 0) {
-    if ((uv_now(ecewo_server.loop) - start) >= SHUTDOWN_TIMEOUT_MS) {
-      LOG_DEBUG("External async timeout: %d operations abandoned",
-                get_pending_async_work());
-      break;
-    }
-    uv_run(ecewo_server.loop, UV_RUN_ONCE);
   }
+  if (prev == 1)
+    uv_unref((uv_handle_t *)&ecewo_server.async_work_handle);
+}
 
-  start = uv_now(ecewo_server.loop);
+static void on_force_close_timeout(uv_timer_t *handle) {
+  uv_timer_stop(handle);
+  uv_close((uv_handle_t *)handle, (uv_close_cb)free);
+  ecewo_server.force_close_timer = NULL;
 
-  while (ecewo_server.active_connections > 0) {
-    if ((uv_now(ecewo_server.loop) - start) >= SHUTDOWN_TIMEOUT_MS) {
-      LOG_DEBUG("Graceful shutdown timeout: %d connections forced closed",
-                ecewo_server.active_connections);
-      break;
-    }
-
-    client_t *current = ecewo_server.client_list_head;
-    bool has_active = false;
-
-    while (current) {
-      client_t *next = current->next;
-
-      if (!current->request_in_progress && !current->closing) {
-        close_client(current);
-      } else {
-        has_active = true;
-      }
-
-      current = next;
-    }
-
-    if (!has_active)
-      break;
-
-    uv_run(ecewo_server.loop, UV_RUN_ONCE);
-  }
-
-  // Force close all remaining connections
   client_t *current = ecewo_server.client_list_head;
   while (current) {
     client_t *next = current->next;
-    close_client(current);
+    if (!current->closing && !uv_is_closing((uv_handle_t *)&current->handle))
+      close_client(current);
     current = next;
   }
-
-  // All requests are done and the loop is still alive.
-  // Safe for plugin cleanup that calls uv_close() or other libuv APIs.
-  if (ecewo_server.shutdown_callback)
-    ecewo_server.shutdown_callback();
-
-  // LIBUV LOOP CLEANUP
-  uv_stop(ecewo_server.loop);
-  uv_walk(ecewo_server.loop, close_walk_cb, NULL);
-  while (uv_run(ecewo_server.loop, UV_RUN_DEFAULT) != 0)
-    ;
-
-  // uv_loop_close() is called in server_cleanup()
 }
 
 void server_shutdown(void) {
   if (ecewo_server.shutdown_requested)
     return;
 
-  ecewo_server.shutdown_requested = 1;
-  ecewo_server.running = 0;
+  ecewo_server.shutdown_requested = true;
+  ecewo_server.running = false;
 
-  stop_cleanup_timer();
+  // Stop accepting new connections
+  if (ecewo_server.server && !uv_is_closing((uv_handle_t *)ecewo_server.server))
+    uv_close((uv_handle_t *)ecewo_server.server, on_server_closed);
+
+  // Unref the cleanup timer so it no longer prevents the loop from exiting.
+  // It will be fully closed in server_cleanup() after uv_run() returns.
+  if (ecewo_server.cleanup_timer)
+    uv_unref((uv_handle_t *)ecewo_server.cleanup_timer);
 
   const char *is_worker = getenv("ECEWO_WORKER");
   bool in_cluster = (is_worker && strcmp(is_worker, "1") == 0);
 
-  // Close signal handlers
   if (!in_cluster) {
     if (!uv_is_closing((uv_handle_t *)&ecewo_server.sigint_handle)) {
       uv_signal_stop(&ecewo_server.sigint_handle);
@@ -514,19 +455,31 @@ void server_shutdown(void) {
   if (!uv_is_closing((uv_handle_t *)&ecewo_server.shutdown_async))
     uv_close((uv_handle_t *)&ecewo_server.shutdown_async, NULL);
 
-  // Stop accepting new connections
-  if (ecewo_server.server && !uv_is_closing((uv_handle_t *)ecewo_server.server))
-    uv_close((uv_handle_t *)ecewo_server.server, on_server_closed);
-
-  // If a request is currently being processed, we must avoid running the event loop again.
-  // Doing so could close a connection that's still in use, leading to memory errors.
-  // Instead, just stop the loop; server_cleanup() will safely finish shutdown afterwards.
-  if (ecewo_server.dispatching) {
-    uv_stop(ecewo_server.loop);
-    return;
+  // Close idle connections immediately. In-progress connections close
+  // themselves when their request finishes. The force-close timer is the
+  // backstop for anything that takes too long.
+  client_t *current = ecewo_server.client_list_head;
+  while (current) {
+    client_t *next = current->next;
+    if (!current->request_in_progress && !current->closing)
+      close_client(current);
+    current = next;
   }
 
-  server_shutdown_cleanup();
+  // Arm a hard timeout only if connections are still open.
+  // on_client_closed() cancels it early if all connections drain before it fires.
+  if (ecewo_server.active_connections > 0) {
+    ecewo_server.force_close_timer = malloc(sizeof(uv_timer_t));
+    if (ecewo_server.force_close_timer) {
+      uv_timer_init(ecewo_server.loop, ecewo_server.force_close_timer);
+      uv_timer_start(ecewo_server.force_close_timer,
+                     on_force_close_timeout,
+                     SHUTDOWN_TIMEOUT_MS, 0);
+    }
+  }
+
+  // Return immediately. The outer uv_run() in server_run() exits naturally
+  // once all handles (clients, spawn uv_async_t, force-close timer) are closed.
 }
 
 static void router_cleanup(void) {
@@ -648,10 +601,18 @@ static void server_cleanup(void) {
   if (!ecewo_server.shutdown_requested)
     server_shutdown();
 
-  // server_shutdown() may have skipped the heavy cleanup when called from
-  // inside the event loop (dispatching=true). Finish it here now that we are
-  // safely outside any I/O callback.
-  server_shutdown_cleanup();
+  // The outer uv_run() has returned; all active handles are closed.
+  // Call the user's shutdown callback while the loop pointer is still valid.
+  if (ecewo_server.shutdown_callback)
+    ecewo_server.shutdown_callback();
+
+  // Fully close the cleanup timer (it was only unreffed in server_shutdown).
+  stop_cleanup_timer();
+
+  // Close anything the shutdown path may have missed, then drain close callbacks.
+  uv_walk(ecewo_server.loop, close_walk_cb, NULL);
+  while (uv_run(ecewo_server.loop, UV_RUN_DEFAULT) != 0)
+    ;
 
   router_cleanup();
   arena_pool_destroy();
@@ -746,7 +707,10 @@ int server_init(void) {
   if (uv_async_init(ecewo_server.loop, &ecewo_server.shutdown_async, on_async_shutdown) != 0)
     return SERVER_INIT_FAILED;
 
-  atomic_store_explicit(&ecewo_server.pending_async_work, 0, memory_order_relaxed);
+  if (uv_async_init(ecewo_server.loop, &ecewo_server.async_work_handle, on_async_work_noop) != 0)
+    return SERVER_INIT_FAILED;
+  uv_unref((uv_handle_t *)&ecewo_server.async_work_handle);
+  atomic_store_explicit(&ecewo_server.async_work_count, 0, memory_order_relaxed);
 
   if (router_init() != 0)
     return SERVER_INIT_FAILED;
@@ -1073,11 +1037,7 @@ void server_run(void) {
     return;
   }
 
-  // Mark that we are inside the event loop so that server_shutdown() called
-  // from within an I/O callback does not run a nested uv_run().
-  ecewo_server.dispatching = true;
   uv_run(ecewo_server.loop, UV_RUN_DEFAULT);
-  ecewo_server.dispatching = false;
 
   server_cleanup();
 }

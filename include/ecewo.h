@@ -350,7 +350,6 @@ uv_tcp_t *get_client_handle(Res *res);
 // DEBUG FUNCTIONS
 bool server_is_running(void);
 int get_active_connections(void);
-int get_pending_async_work(void);
 
 #ifdef __cplusplus
 }
