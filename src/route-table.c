@@ -407,7 +407,8 @@ static bool match_node(route_node_t *node,
     uint8_t saved = match->param_count;
     if (add_param_to_match(match, arena,
                            NULL, 0,
-                           seg->start, seg->len) == 0) {
+                           seg->start, seg->len)
+        == 0) {
       if (match_node(node->param_child, path, seg_idx + 1, method_idx, match, arena, allow_wildcards, leaf_out))
         return true;
     }
@@ -538,7 +539,8 @@ int route_table_add(route_table_t *table,
         for (uint8_t j = 0; j < collected_count; j++) {
           names[j] = malloc(collected_name_lens[j] + 1);
           if (!names[j]) {
-            for (uint8_t k = 0; k < j; k++) free(names[k]);
+            for (uint8_t k = 0; k < j; k++)
+              free(names[k]);
             free(names);
             free(segs);
             free(pattern_buf);
@@ -604,7 +606,8 @@ int route_table_add(route_table_t *table,
         void *old = NULL;
         if (!raxInsert(node->children,
                        (unsigned char *)segs[i].start, segs[i].len,
-                       new_child, &old) && !old) {
+                       new_child, &old)
+            && !old) {
           route_node_free(new_child);
           free(segs);
           free(pattern_buf);
@@ -628,7 +631,8 @@ int route_table_add(route_table_t *table,
     for (uint8_t j = 0; j < collected_count; j++) {
       names[j] = malloc(collected_name_lens[j] + 1);
       if (!names[j]) {
-        for (uint8_t k = 0; k < j; k++) free(names[k]);
+        for (uint8_t k = 0; k < j; k++)
+          free(names[k]);
         free(names);
         free(segs);
         free(pattern_buf);
@@ -694,8 +698,8 @@ bool route_table_match(route_table_t *table,
   if (leaf && match->param_count > 0) {
     bool is_wildcard = (match->handler == leaf->wildcard_handlers[method_idx]);
     char **names = is_wildcard
-                   ? leaf->wildcard_param_names[method_idx]
-                   : leaf->route_param_names[method_idx];
+        ? leaf->wildcard_param_names[method_idx]
+        : leaf->route_param_names[method_idx];
     if (names) {
       param_match_t *arr = match->params ? match->params : match->inline_params;
       for (uint8_t i = 0; i < match->param_count; i++) {

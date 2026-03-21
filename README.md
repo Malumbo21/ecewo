@@ -8,7 +8,6 @@
 
 - [Requirements](#requirements)
 - [Quick Start](#quick-start)
-- [Benchmarks](#benchmarks)
 - [Dependencies](#dependencies)
 - [Running Tests](#running-tests)
 - [Documentation](#documentation)
