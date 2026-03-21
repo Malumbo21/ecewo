@@ -66,7 +66,7 @@ include(FetchContent)
 FetchContent_Declare(
   ecewo
   GIT_REPOSITORY https://github.com/ecewo/ecewo.git
-  GIT_TAG v3.5.0
+  GIT_TAG v3.6.0
 )
 
 FetchContent_MakeAvailable(ecewo)
@@ -90,26 +90,14 @@ cmake --build .
 
 ---
 
-## Benchmarks
-
-Here are basic "Hello World" benchmark results comparing several frameworks with ecewo. See the source code of the [benchmark test](https://github.com/ecewo/benchmarks).
-
-- **Machine:** 12th Gen Intel Core i7-12700F x 20, 32GB RAM, SSD
-- **OS:** Fedora Workstation 43
-- **Method:** `wrk -t8 -c100 -d40s http://localhost:3000` * 2, taking the second results.
-
-| Framework | Req/Sec   | Transfer/Sec |
-|-----------|-----------|--------------|
-| ecewo     | 1,208,226 | 178.60 MB    |
-| axum      | 1,192,785 | 168.35 MB    |
-| go        | 893,248   | 115.85 MB    |
-| express   | 93,214    | 23.20 MB     |
-
----
-
 ## Dependencies
 
-ecewo is built on top of [libuv](https://github.com/libuv/libuv) and [llhttp](https://github.com/nodejs/llhttp). They are fetched automatically by CMake, so no manual installation is required.
+- [libuv](https://github.com/libuv/libuv) for async event loop.
+- [llhttp](https://github.com/nodejs/llhttp) for HTTP parsing.
+- [rax](https://github.com/antirez/rax) for radix-tree router.
+- A customized arena allocator based on [tsoding/arena](https://github.com/tsoding/arena).
+
+No manual installation required for any of these dependencies.
 
 ---
 
