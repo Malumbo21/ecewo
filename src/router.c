@@ -381,6 +381,14 @@ int router(client_t *client, const char *request_data, size_t request_len) {
     if (!client->valid)
       goto done;
 
+    // If body_stream middleware ran, save req/res so that when the body
+    // finally arrives on a later TCP read, body_stream_complete can be called
+    // on this req instead of dispatching a fresh one
+    if (ctx->on_body_chunk && req) {
+      client->stream_req = req;
+      client->stream_res = res;
+    }
+
     // Calculate remaining bytes before touching the parser
     // llhttp_get_error_pos() points to where the pause happened
     // Everything after that has not been parsed yet
@@ -406,6 +414,8 @@ int router(client_t *client, const char *request_data, size_t request_len) {
     switch (body_result) {
     case PARSE_SUCCESS:
       if (ctx->on_body_chunk && req) {
+        client->stream_req = NULL;
+        client->stream_res = NULL;
         body_stream_complete(req);
       } else if (client->handler_pending) {
         client->handler_pending = false;
@@ -477,6 +487,25 @@ int router(client_t *client, const char *request_data, size_t request_len) {
 
   default:
     send_error(NULL, handle, 400);
+    goto done;
+  }
+
+  // A streaming request whose body arrived across multiple TCP reads:
+  // the first TCP read parsed headers and started dispatch but the body
+  // was not yet complete (PARSE_INCOMPLETE), so body_stream_complete was
+  // deferred. Call the complete cb on the saved req 
+  // instead of dispatching a fresh req/res
+  if (ctx->on_body_chunk && client->stream_req) {
+    Req *sreq = client->stream_req;
+    Res *sres = client->stream_res;
+    client->stream_req = NULL;
+    client->stream_res = NULL;
+    body_stream_complete(sreq);
+    if (!client->valid)
+      goto done;
+    retval = (sres && !sres->replied)
+                 ? REQUEST_PENDING
+                 : (sres && sres->keep_alive ? REQUEST_KEEP_ALIVE : REQUEST_CLOSE);
     goto done;
   }
 

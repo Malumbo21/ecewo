@@ -63,6 +63,14 @@ struct client_s {
   bool handler_pending;
   Req *pending_req;
   Res *pending_res;
+
+  // Saved req/res for streaming requests whose body spans multiple TCP reads.
+  // Set on the first TCP read (headers complete, body not yet fully arrived)
+  // when body_stream middleware is detected; consumed on a later TCP read
+  // (body finally complete) to call body_stream_complete on the original req
+  // instead of dispatching a fresh one.
+  Req *stream_req;
+  Res *stream_res;
 };
 
 void server_on_read(uv_stream_t *stream, ssize_t nread, const uv_buf_t *buf);
