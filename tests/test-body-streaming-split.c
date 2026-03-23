@@ -20,6 +20,8 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+// ===============================================================================
+
 // Test: streaming body that arrives across two separate TCP reads.
 //
 // The normal body-streaming test sends headers + body in a single write, so
@@ -33,11 +35,25 @@
 #include "ecewo-mock.h"
 #include "tester.h"
 #include <string.h>
+
+#ifdef _WIN32
+#include <winsock2.h>
+#include <ws2tcpip.h>
+typedef SOCKET sock_t;
+#define SOCK_INVALID INVALID_SOCKET
+#define sock_close(s) closesocket(s)
+#define usleep(us) Sleep((us) / 1000)
+typedef int ssize_t;
+#else
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <netinet/tcp.h>
 #include <unistd.h>
+typedef int sock_t;
+#define SOCK_INVALID (-1)
+#define sock_close(s) close(s)
+#endif
 
 typedef struct {
   int chunks_received;
@@ -85,12 +101,12 @@ static int test_body_split_across_reads(void) {
                              "\r\n",
                              TEST_PORT, payload_len);
 
-  int sock = socket(AF_INET, SOCK_STREAM, 0);
-  ASSERT_TRUE(sock >= 0);
+  sock_t sock = socket(AF_INET, SOCK_STREAM, 0);
+  ASSERT_TRUE(sock != SOCK_INVALID);
 
   // Disable Nagle so each send() becomes its own TCP segment
   int one = 1;
-  setsockopt(sock, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one));
+  setsockopt(sock, IPPROTO_TCP, TCP_NODELAY, (const char *)&one, sizeof(one));
 
   struct sockaddr_in addr;
   memset(&addr, 0, sizeof(addr));
@@ -101,7 +117,7 @@ static int test_body_split_across_reads(void) {
   ASSERT_TRUE(connect(sock, (struct sockaddr *)&addr, sizeof(addr)) == 0);
 
   // First write: headers only (no body bytes)
-  ssize_t sent = send(sock, headers, (size_t)headers_len, 0);
+  ssize_t sent = send(sock, headers, (int)headers_len, 0);
   ASSERT_TRUE(sent == (ssize_t)headers_len);
 
   // Give the server time to call on_read and process the headers before
@@ -109,7 +125,7 @@ static int test_body_split_across_reads(void) {
   usleep(50000);
 
   // Second write: body
-  sent = send(sock, payload, payload_len, 0);
+  sent = send(sock, payload, (int)payload_len, 0);
   ASSERT_TRUE(sent == (ssize_t)payload_len);
 
   // Read the full response
@@ -118,12 +134,12 @@ static int test_body_split_across_reads(void) {
   ssize_t total = 0;
   while (1) {
     ssize_t n = recv(sock, response + total,
-                     sizeof(response) - 1 - (size_t)total, 0);
+                     (int)(sizeof(response) - 1 - (size_t)total), 0);
     if (n <= 0)
       break;
     total += n;
   }
-  close(sock);
+  sock_close(sock);
 
   ASSERT_TRUE(total > 0);
   ASSERT_TRUE(strstr(response, "200") != NULL);
