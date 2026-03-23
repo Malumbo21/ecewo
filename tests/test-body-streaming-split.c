@@ -43,7 +43,6 @@ typedef SOCKET sock_t;
 #define SOCK_INVALID INVALID_SOCKET
 #define sock_close(s) closesocket(s)
 #define usleep(us) Sleep((us) / 1000)
-typedef int ssize_t;
 #else
 #include <sys/socket.h>
 #include <netinet/in.h>
