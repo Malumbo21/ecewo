@@ -30,8 +30,6 @@
 #include "utils.h"
 #include "logger.h"
 
-static atomic_uint_fast64_t next_client_id = ATOMIC_VAR_INIT(1);
-
 #ifndef MAX_CONNECTIONS
 #define MAX_CONNECTIONS 10000
 #endif

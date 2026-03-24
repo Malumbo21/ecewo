@@ -146,6 +146,17 @@ if(NOT TARGET ecewo::ecewo)
   if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
     target_compile_options(ecewo PRIVATE
       -fno-strict-aliasing
+      -Wunused-function
+      -Wunused-variable
+      -Werror=unused-function
+      -Werror=unused-variable
+    )
+  endif()
+
+  if(CMAKE_C_COMPILER_ID MATCHES "Clang|AppleClang")
+    target_compile_options(ecewo PRIVATE
+      -Wunreachable-code
+      -Werror=unreachable-code
     )
   endif()
 
