@@ -143,6 +143,10 @@ if(NOT TARGET ecewo::ecewo)
   add_library(ecewo::ecewo ALIAS ecewo)
   include(${CMAKE_CURRENT_LIST_DIR}/cmake/plugins.cmake)
 
+  if(ECEWO_BUILD_TESTS)
+    target_compile_definitions(ecewo PRIVATE ECEWO_TEST_MODE=1)
+  endif()
+
   if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
     target_compile_options(ecewo PRIVATE
       -fno-strict-aliasing

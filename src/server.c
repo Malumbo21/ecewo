@@ -997,12 +997,10 @@ int server_listen(uint16_t port) {
   struct sockaddr_in addr;
   uv_ip4_addr("0.0.0.0", port, &addr);
 
-  const char *is_test = getenv("ECEWO_TEST_MODE");
   unsigned int flags = 0;
 
-#if !defined(_WIN32) && !defined(__APPLE__)
-  if (!is_test || strcmp(is_test, "1") != 0)
-    flags = UV_TCP_REUSEPORT;
+#if !defined(_WIN32) && !defined(__APPLE__) && !defined(ECEWO_TEST_MODE)
+  flags = UV_TCP_REUSEPORT;
 #endif
 
   if (uv_tcp_bind(ecewo_server.server, (const struct sockaddr *)&addr, flags) != 0) {
