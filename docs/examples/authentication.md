@@ -223,7 +223,7 @@ void handle_session_data(ecewo_request_t *req, ecewo_response_t *res) {
       free(theme); // Free the memory!
    }
 
-   ecewo_send_text(res, OK, "Check out the console!");
+   ecewo_send_text(res, ECEWO_OK, "Check out the console!");
 }
 
 
@@ -272,7 +272,7 @@ void handle_protected_route(ecewo_request_t *req, ecewo_response_t *res) {
    if (!sess)
    {
       // No session, user not logged in
-      ecewo_send_text(res, UNAUTHORIZED, "Error: Authentication required");
+      ecewo_send_text(res, ECEWO_UNAUTHORIZED, "Error: Authentication required");
       return;
    }
 
@@ -282,11 +282,11 @@ void handle_protected_route(ecewo_request_t *req, ecewo_response_t *res) {
    if (user_id && strcmp(user_id, STATIC_USER_ID) == 0)
    {
       char *welcome_message = ecewo_sprintf(res->arena, "Welcome, %s", STATIC_NAME);
-      ecewo_send_text(res, OK, welcome_message);
+      ecewo_send_text(res, ECEWO_OK, welcome_message);
    }
    else
    {
-      ecewo_send_text(res, FORBIDDEN, "You are not allowed to see this page.");
+      ecewo_send_text(res, ECEWO_FORBIDDEN, "You are not allowed to see this page.");
    }
 
    free(user_id);

@@ -34,7 +34,7 @@
 #include <stdio.h>
 
 void hello_world(ecewo_request_t *req, ecewo_response_t *res) {
-  ecewo_send_text(res, OK, "Hello, World!");
+  ecewo_send_text(res, ECEWO_OK, "Hello, World!");
 }
 
 int main(void) {
