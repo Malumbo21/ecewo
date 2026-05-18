@@ -362,8 +362,11 @@ ECEWO_EXPORT void ecewo_set_listen_address(ecewo_app_t *app, const char *address
  * Middleware is executed in registration order before the route handler.
  * `fn` must call `next(req, res)` to continue the chain, or send a response
  * itself to short-circuit further processing.
+ *
+ * Returns 0 on success, -1 on error (NULL args, allocation failure). Embedders
+ * should check the return value rather than rely on the library to abort.
  */
-ECEWO_EXPORT void ecewo_use(ecewo_app_t *app, const char *path, ecewo_middleware_t fn);
+ECEWO_EXPORT int ecewo_use(ecewo_app_t *app, const char *path, ecewo_middleware_t fn);
 
 // ---------------------------------------------------------------------------
 // ROUTE REGISTRATION

@@ -128,15 +128,15 @@ void chain_start(ecewo_request_t *req, ecewo_response_t *res, MiddlewareInfo *mi
   execute_next(req, res);
 }
 
-void ecewo_use(ecewo_app_t *app, const char *path, ecewo_middleware_t middleware_handler) {
+int ecewo_use(ecewo_app_t *app, const char *path, ecewo_middleware_t middleware_handler) {
   if (!middleware_handler) {
     LOG_ERROR("NULL middleware handler");
-    abort();
+    return -1;
   }
 
   if (!app || !app->server) {
     LOG_ERROR("NULL app in ecewo_use");
-    abort();
+    return -1;
   }
 
   ecewo__server_t *srv = app->server;
@@ -151,7 +151,7 @@ void ecewo_use(ecewo_app_t *app, const char *path, ecewo_middleware_t middleware
                                                new_cap * sizeof *tmp);
     if (!tmp) {
       LOG_ERROR("Reallocation failed in global middleware");
-      abort();
+      return -1;
     }
     srv->global_middleware = tmp;
     srv->global_middleware_capacity = new_cap;
@@ -160,6 +160,7 @@ void ecewo_use(ecewo_app_t *app, const char *path, ecewo_middleware_t middleware
   srv->global_middleware[srv->global_middleware_count].path_prefix = path;
   srv->global_middleware[srv->global_middleware_count].handler = middleware_handler;
   srv->global_middleware_count++;
+  return 0;
 }
 
 void reset_middleware(ecewo__server_t *srv) {
