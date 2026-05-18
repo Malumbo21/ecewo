@@ -236,8 +236,14 @@ ECEWO_EXPORT const char *ecewo_query(const ecewo_request_t *req, const char *key
 ECEWO_EXPORT const char *ecewo_header_get(const ecewo_request_t *req, const char *key);
 
 /** Append a response header. Does NOT check for duplicates - calling this twice with the
- *  same name will produce two headers in the response. Set Content-Type via this function
- *  or use the ecewo_send_text/html/json() helpers which set it automatically. */
+ *  same name will produce two headers in the response (legitimate for e.g. Set-Cookie).
+ *
+ *  Reserved framing / hop-by-hop headers are rejected: Content-Length, Transfer-Encoding,
+ *  Connection, Host, Date. These are composed by the framework; attempting to set them
+ *  is a silent no-op (logged at ERROR) to prevent request-smuggling foot-guns.
+ *
+ *  Set Content-Type via this function or use the ecewo_send_text/html/json() helpers which
+ *  set it automatically. */
 ECEWO_EXPORT void ecewo_header_set(ecewo_response_t *res, const char *name, const char *value);
 
 // ---------------------------------------------------------------------------

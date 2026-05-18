@@ -27,12 +27,11 @@
 #include <stdlib.h>
 #include <ctype.h>
 
-#ifdef ECEWO_DEBUG
 #ifdef _WIN32
+#include <string.h>
 #define strcasecmp _stricmp
 #else
-#define strcasecmp strcasecmp
-#endif
+#include <strings.h>
 #endif
 
 typedef struct {
@@ -379,6 +378,21 @@ static bool is_valid_header_name(const char *name) {
   return true;
 }
 
+static bool is_reserved_response_header(const char *name) {
+  static const char *const reserved[] = {
+    "Content-Length",
+    "Transfer-Encoding",
+    "Connection",
+    "Host",
+    "Date",
+  };
+  for (size_t i = 0; i < sizeof(reserved) / sizeof(reserved[0]); i++) {
+    if (strcasecmp(name, reserved[i]) == 0)
+      return true;
+  }
+  return false;
+}
+
 static bool is_valid_header_value(const char *value) {
   if (!value)
     return false;
@@ -420,19 +434,10 @@ void ecewo_header_set(ecewo_response_t *res, const char *name, const char *value
     return;
   }
 
-#ifdef ECEWO_DEBUG
-  // Check for duplicate headers and warn
-  // but still add the header, do not override
-  for (uint16_t i = 0; i < res->header_count; i++) {
-    if (res->headers[i].name && strcasecmp(res->headers[i].name, name) == 0) {
-      LOG_DEBUG("Warning: Duplicate header '%s' detected!", name);
-      LOG_DEBUG("  Existing value: '%s'", res->headers[i].value);
-      LOG_DEBUG("  New value: '%s'", value);
-      LOG_DEBUG("  Both will be sent (this may cause issues)");
-      break;
-    }
+  if (is_reserved_response_header(name)) {
+    LOG_ERROR("Refusing reserved/framing header '%s' (set by framework)", name);
+    return;
   }
-#endif
 
   if (res->header_count >= res->header_capacity) {
     uint16_t new_cap = res->header_capacity ? res->header_capacity * 2 : 8;
