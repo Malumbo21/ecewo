@@ -91,7 +91,7 @@ include(FetchContent)
 FetchContent_Declare(
   libuv
   GIT_REPOSITORY https://github.com/libuv/libuv.git
-  GIT_TAG v1.52.1
+  GIT_TAG v1.52.0
   GIT_SHALLOW TRUE
 )
 
