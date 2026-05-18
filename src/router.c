@@ -105,7 +105,6 @@ static ecewo_response_t *create_res(ecewo_arena_t *request_arena, uv_tcp_t *ecew
   res->arena = request_arena;
   res->ecewo__client_socket = ecewo__client_socket;
   res->status = 200;
-  res->content_type = ecewo_strdup(request_arena, "text/plain");
   res->keep_alive = 1;
   res->is_head_request = false;
 

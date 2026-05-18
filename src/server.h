@@ -77,7 +77,6 @@ struct ecewo_response_s {
   ecewo_arena_t *arena;
   void *ecewo__client_socket;
   uint16_t status;
-  char *content_type;
   void *body;
   size_t body_len;
   bool keep_alive;
