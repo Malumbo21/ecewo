@@ -413,9 +413,7 @@ int router(ecewo_client_t *client, const char *request_data, size_t request_len)
         ecewo_response_t *final_res = (client->pending_res && client->pending_res->replied)
             ? client->pending_res
             : res;
-        if (final_res && !final_res->replied) {
-          retval = REQUEST_PENDING;
-        } else if (client->taken_over) {
+        if ((final_res && !final_res->replied) || client->taken_over) {
           retval = REQUEST_PENDING;
         } else {
           retval = final_res && final_res->keep_alive ? REQUEST_KEEP_ALIVE : REQUEST_CLOSE;
