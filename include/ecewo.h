@@ -342,6 +342,13 @@ ECEWO_EXPORT void ecewo_set_cleanup_interval(ecewo_app_t *app, uint64_t ms);
 /** Set the graceful shutdown drain timeout in milliseconds (default: 15000). */
 ECEWO_EXPORT void ecewo_set_shutdown_timeout(ecewo_app_t *app, uint64_t ms);
 
+/** Set the bind address as a numeric IPv4 or IPv6 string (default: "0.0.0.0").
+ *  Examples: "127.0.0.1" (IPv4 localhost only), "::" (all IPv6 interfaces; on
+ *  dual-stack systems this also accepts IPv4), "::1" (IPv6 localhost),
+ *  "192.168.1.10" (specific NIC). Hostnames are not resolved; pass a numeric
+ *  address. Must be set before ecewo_listen() / ecewo_bind(). */
+ECEWO_EXPORT void ecewo_set_listen_address(ecewo_app_t *app, const char *address);
+
 // ---------------------------------------------------------------------------
 // MIDDLEWARE REGISTRATION
 // ---------------------------------------------------------------------------

@@ -49,6 +49,7 @@ struct ecewo_app_s {
   uint64_t request_timeout_ms;
   uint64_t cleanup_interval_ms;
   uint64_t shutdown_timeout_ms;
+  char listen_address[64]; // numeric IPv4 or IPv6 string; INET6_ADDRSTRLEN=46
   plugin_slot_t *plugin_slots;
   int plugin_slot_count;
   int plugin_slot_capacity;

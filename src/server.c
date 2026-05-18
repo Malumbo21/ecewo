@@ -1230,6 +1230,7 @@ ecewo_app_t *ecewo_create(void) {
   app->request_timeout_ms = 0;
   app->cleanup_interval_ms = 30000;
   app->shutdown_timeout_ms = 15000;
+  memcpy(app->listen_address, "0.0.0.0", sizeof("0.0.0.0"));
 
   // Root struct; no arena exists yet to allocate from.
   ecewo__server_t *srv = calloc(1, sizeof(ecewo__server_t));
@@ -1285,6 +1286,23 @@ int ecewo_bind(ecewo_app_t *app, uint16_t port) {
   if (srv->running)
     return SERVER_ALREADY_RUNNING;
 
+  // Parse the configured listen address as numeric IPv4 first, IPv6 second.
+  // Failing here avoids allocating the tcp handle for an invalid address.
+  struct sockaddr_in addr4;
+  struct sockaddr_in6 addr6;
+  const struct sockaddr *bind_addr;
+  bool is_ipv6 = false;
+
+  if (uv_ip4_addr(app->listen_address, port, &addr4) == 0) {
+    bind_addr = (const struct sockaddr *)&addr4;
+  } else if (uv_ip6_addr(app->listen_address, port, &addr6) == 0) {
+    bind_addr = (const struct sockaddr *)&addr6;
+    is_ipv6 = true;
+  } else {
+    LOG_ERROR("Invalid listen address: %s", app->listen_address);
+    return SERVER_BIND_FAILED;
+  }
+
   // libuv handle; freed in on_server_closed after uv_close completes.
   srv->tcp_server = malloc(sizeof(uv_tcp_t));
   if (!srv->tcp_server)
@@ -1301,18 +1319,15 @@ int ecewo_bind(ecewo_app_t *app, uint16_t port) {
 
   uv_tcp_simultaneous_accepts(srv->tcp_server, 1);
 
-  struct sockaddr_in addr;
-  uv_ip4_addr("0.0.0.0", port, &addr);
-
   unsigned int flags = 0;
 
 #if !defined(_WIN32) && !defined(__APPLE__) && !defined(ECEWO_TEST_MODE)
   flags = UV_TCP_REUSEPORT;
 #endif
 
-  if (uv_tcp_bind(srv->tcp_server, (const struct sockaddr *)&addr, flags) != 0) {
+  if (uv_tcp_bind(srv->tcp_server, bind_addr, flags) != 0) {
     uv_close((uv_handle_t *)srv->tcp_server, on_server_closed);
-    LOG_ERROR("Failed to bind to port %" PRIu16 " (may be in use)", port);
+    LOG_ERROR("Failed to bind to %s:%" PRIu16 " (may be in use)", app->listen_address, port);
     return SERVER_BIND_FAILED;
   }
 
@@ -1328,8 +1343,16 @@ int ecewo_bind(ecewo_app_t *app, uint16_t port) {
   srv->running = true;
 
   const char *is_worker = getenv("ECEWO_WORKER");
-  if (!is_worker || strcmp(is_worker, "1") != 0)
-    printf("Server listening on http://localhost:%" PRIu16 "\n", port);
+  if (!is_worker || strcmp(is_worker, "1") != 0) {
+    bool is_wildcard = (strcmp(app->listen_address, "0.0.0.0") == 0
+                        || strcmp(app->listen_address, "::") == 0);
+    if (is_wildcard)
+      printf("Server listening on http://localhost:%" PRIu16 "\n", port);
+    else if (is_ipv6)
+      printf("Server listening on http://[%s]:%" PRIu16 "\n", app->listen_address, port);
+    else
+      printf("Server listening on http://%s:%" PRIu16 "\n", app->listen_address, port);
+  }
 
   return SERVER_OK;
 }
@@ -1586,4 +1609,15 @@ void ecewo_set_cleanup_interval(ecewo_app_t *app, uint64_t ms) {
 void ecewo_set_shutdown_timeout(ecewo_app_t *app, uint64_t ms) {
   if (app)
     app->shutdown_timeout_ms = ms;
+}
+void ecewo_set_listen_address(ecewo_app_t *app, const char *address) {
+  if (!app || !address)
+    return;
+  size_t len = strlen(address);
+  if (len >= sizeof(app->listen_address)) {
+    LOG_ERROR("Listen address too long (max %zu): %s",
+              sizeof(app->listen_address) - 1, address);
+    return;
+  }
+  memcpy(app->listen_address, address, len + 1);
 }
