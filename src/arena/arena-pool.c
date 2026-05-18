@@ -24,8 +24,11 @@
 #include <stdlib.h>
 #include <stdint.h>
 
+// Soft cap on the LIFO recycle cache. Arenas beyond this point are freed at
+// return rather than retained. Does NOT limit the number of live arenas;
+// borrow always tries malloc and only fails on OS allocation failure.
 #ifndef ARENA_POOL_CAP
-#define ARENA_POOL_CAP 1024 /* Maximum allocatable arena count */
+#define ARENA_POOL_CAP 1024
 #endif
 
 #ifndef PREALLOCATED_ARENA
@@ -45,14 +48,15 @@
 #endif
 
 typedef struct {
-  ecewo_arena_t *arenas[ARENA_POOL_CAP];
-  uint16_t head;
-  uint16_t total_allocated;
+  ecewo_arena_t **arenas; // heap-allocated LIFO of size pool_capacity
+  uint32_t pool_capacity; // size of the arenas[] array (recycle cache size)
+  uint32_t head;
+  uint32_t total_allocated; // live arenas (cached + in flight)
 
 #ifdef ECEWO_DEBUG
-  uint16_t peak_usage;
-  uint16_t grow_count;
-  uint16_t shrink_count;
+  uint32_t peak_usage;
+  uint32_t grow_count;
+  uint32_t shrink_count;
 #endif
   bool initialized;
 } arena_pool_t;
@@ -64,19 +68,19 @@ static void arena_pool_try_grow(void) {
   if (arena_pool.head > ARENA_POOL_LOW_WATERMARK)
     return;
 
-  uint16_t space_available = ARENA_POOL_CAP - arena_pool.head;
-  if (space_available == 0)
+  if (arena_pool.head >= arena_pool.pool_capacity)
     return;
 
-  uint8_t to_allocate = ARENA_POOL_GROW_BATCH;
+  uint32_t space_available = arena_pool.pool_capacity - arena_pool.head;
+  uint32_t to_allocate = ARENA_POOL_GROW_BATCH;
   if (to_allocate > space_available)
     to_allocate = space_available;
 
 #ifdef ECEWO_DEBUG
-  uint8_t allocated = 0;
+  uint32_t allocated = 0;
 #endif
 
-  for (uint8_t i = 0; i < to_allocate; i++) {
+  for (uint32_t i = 0; i < to_allocate; i++) {
     ecewo_arena_t *arena = malloc(sizeof(ecewo_arena_t));
     if (!arena)
       break;
@@ -95,10 +99,10 @@ static void arena_pool_try_grow(void) {
 
   if (allocated > 0) {
     arena_pool.grow_count++;
-    LOG_DEBUG("Arena pool grew: +%d arenas (now %d/%d available)",
+    LOG_DEBUG("Arena pool grew: +%u arenas (now %u/%u cached)",
               allocated,
               arena_pool.head,
-              ARENA_POOL_CAP);
+              arena_pool.pool_capacity);
 #endif
   }
 }
@@ -109,18 +113,18 @@ static void arena_pool_try_shrink(void) {
     return;
 
   // Keep some reserve, don't shrink below initial size
-  uint8_t target = PREALLOCATED_ARENA + ARENA_POOL_GROW_BATCH;
+  uint32_t target = PREALLOCATED_ARENA + ARENA_POOL_GROW_BATCH;
   if (arena_pool.head <= target)
     return;
 
   // Shrink by half of excess
-  uint16_t excess = arena_pool.head - target;
-  uint16_t to_free = excess / 2;
+  uint32_t excess = arena_pool.head - target;
+  uint32_t to_free = excess / 2;
   if (to_free < ARENA_POOL_GROW_BATCH)
     to_free = ARENA_POOL_GROW_BATCH;
 
 #ifdef ECEWO_DEBUG
-  uint16_t freed = 0;
+  uint32_t freed = 0;
 #endif
 
   while (to_free > 0 && arena_pool.head > target) {
@@ -130,6 +134,8 @@ static void arena_pool_try_shrink(void) {
     if (arena) {
       arena_free(arena);
       free(arena);
+      if (arena_pool.total_allocated > 0)
+        arena_pool.total_allocated--;
 
 #ifdef ECEWO_DEBUG
       freed++;
@@ -142,19 +148,19 @@ static void arena_pool_try_shrink(void) {
 #ifdef ECEWO_DEBUG
   if (freed > 0) {
     arena_pool.shrink_count++;
-    LOG_DEBUG("Arena pool shrunk: -%d arenas (now %d/%d available)",
-              freed, arena_pool.head, ARENA_POOL_CAP);
+    LOG_DEBUG("Arena pool shrunk: -%u arenas (now %u/%u cached)",
+              freed, arena_pool.head, arena_pool.pool_capacity);
   }
 #endif
 }
 
-static inline uint16_t get_arena_preallocation() {
-  uint16_t preallocate = PREALLOCATED_ARENA;
+static inline uint32_t get_arena_preallocation(uint32_t cap) {
+  uint32_t preallocate = PREALLOCATED_ARENA;
 
-  if (preallocate > ARENA_POOL_CAP) {
-    LOG_DEBUG("%d exceeds maximum %d, capping to %d",
-              preallocate, ARENA_POOL_CAP, ARENA_POOL_CAP);
-    preallocate = ARENA_POOL_CAP;
+  if (preallocate > cap) {
+    LOG_DEBUG("%u exceeds maximum %u, capping to %u",
+              preallocate, cap, cap);
+    preallocate = cap;
   }
 
   const char *env_prealloc = getenv("ECEWO_ARENA_PREALLOC");
@@ -164,20 +170,20 @@ static inline uint16_t get_arena_preallocation() {
   char *endptr;
   long val = strtol(env_prealloc, &endptr, 10);
 
-  if (endptr == env_prealloc || *endptr != '\0' || val <= 0 || val > UINT16_MAX) {
-    LOG_DEBUG("Invalid ECEWO_ARENA_PREALLOC='%s', using default: %d",
+  if (endptr == env_prealloc || *endptr != '\0' || val <= 0 || val > UINT32_MAX) {
+    LOG_DEBUG("Invalid ECEWO_ARENA_PREALLOC='%s', using default: %u",
               env_prealloc, preallocate);
     return preallocate;
   }
 
-  uint16_t env_val = (uint16_t)val;
+  uint32_t env_val = (uint32_t)val;
 
-  if (env_val > ARENA_POOL_CAP) {
-    LOG_DEBUG("ECEWO_ARENA_PREALLOC=%d exceeds maximum %d, capping to %d",
-              env_val, ARENA_POOL_CAP, ARENA_POOL_CAP);
-    return ARENA_POOL_CAP;
+  if (env_val > cap) {
+    LOG_DEBUG("ECEWO_ARENA_PREALLOC=%u exceeds maximum %u, capping to %u",
+              env_val, cap, cap);
+    return cap;
   } else {
-    LOG_DEBUG("Using ECEWO_ARENA_PREALLOC=%d from environment", preallocate);
+    LOG_DEBUG("Using ECEWO_ARENA_PREALLOC=%u from environment", env_val);
     return env_val;
   }
 }
@@ -185,6 +191,15 @@ static inline uint16_t get_arena_preallocation() {
 void arena_pool_init(void) {
   if (arena_pool.initialized)
     return;
+
+  arena_pool.pool_capacity = ARENA_POOL_CAP;
+  arena_pool.arenas = calloc(arena_pool.pool_capacity, sizeof(ecewo_arena_t *));
+  if (!arena_pool.arenas) {
+    LOG_ERROR("Failed to allocate arena pool LIFO (%u slots)",
+              arena_pool.pool_capacity);
+    arena_pool.pool_capacity = 0;
+    return;
+  }
 
   arena_pool.head = 0;
   arena_pool.total_allocated = 0;
@@ -195,17 +210,17 @@ void arena_pool_init(void) {
   arena_pool.shrink_count = 0;
 #endif
 
-  const uint16_t preallocate = get_arena_preallocation();
+  const uint32_t preallocate = get_arena_preallocation(arena_pool.pool_capacity);
 
 // Pre-allocate arenas
 #ifdef ECEWO_DEBUG
-  uint16_t allocated = 0;
+  uint32_t allocated = 0;
 #endif
 
-  for (uint16_t i = 0; i < preallocate; i++) {
+  for (uint32_t i = 0; i < preallocate; i++) {
     ecewo_arena_t *arena = malloc(sizeof(ecewo_arena_t));
     if (!arena) {
-      LOG_DEBUG("Failed to allocate arena %d/%d, stopping pre-allocation",
+      LOG_DEBUG("Failed to allocate arena %u/%u, stopping pre-allocation",
                 i + 1, preallocate);
       break;
     }
@@ -213,7 +228,7 @@ void arena_pool_init(void) {
     // Pre-allocate first region
     if (!new_region_to(&arena->begin, &arena->end, ARENA_REGION_SIZE)) {
       free(arena);
-      LOG_DEBUG("Failed to allocate region for arena %d/%d, stopping",
+      LOG_DEBUG("Failed to allocate region for arena %u/%u, stopping",
                 i + 1, preallocate);
       break;
     }
@@ -230,9 +245,9 @@ void arena_pool_init(void) {
 
 #ifdef ECEWO_DEBUG
   double allocated_mb = (allocated * ARENA_REGION_SIZE) / (1024.0 * 1024.0);
-  LOG_DEBUG("Arena pool initialized: %d/%d arenas (%.2f MB)",
+  LOG_DEBUG("Arena pool initialized: %u/%u arenas (%.2f MB)",
             allocated,
-            ARENA_POOL_CAP,
+            arena_pool.pool_capacity,
             allocated_mb);
 #endif
 }
@@ -245,22 +260,27 @@ void arena_pool_destroy(void) {
   // Statistics before destruction
   if (arena_pool.grow_count > 0 || arena_pool.shrink_count > 0) {
     LOG_DEBUG("Arena pool statistics:");
-    LOG_DEBUG("  Total allocated: %d arenas", arena_pool.total_allocated);
-    LOG_DEBUG("  Peak usage: %d arenas", arena_pool.peak_usage);
-    LOG_DEBUG("  Grow operations: %d", arena_pool.grow_count);
-    LOG_DEBUG("  Shrink operations: %d", arena_pool.shrink_count);
+    LOG_DEBUG("  Total allocated: %u arenas", arena_pool.total_allocated);
+    LOG_DEBUG("  Peak usage: %u arenas", arena_pool.peak_usage);
+    LOG_DEBUG("  Grow operations: %u", arena_pool.grow_count);
+    LOG_DEBUG("  Shrink operations: %u", arena_pool.shrink_count);
   }
 #endif
 
-  for (int i = 0; i < arena_pool.head; i++) {
-    if (arena_pool.arenas[i]) {
-      arena_free(arena_pool.arenas[i]);
-      free(arena_pool.arenas[i]);
-      arena_pool.arenas[i] = NULL;
+  if (arena_pool.arenas) {
+    for (uint32_t i = 0; i < arena_pool.head; i++) {
+      if (arena_pool.arenas[i]) {
+        arena_free(arena_pool.arenas[i]);
+        free(arena_pool.arenas[i]);
+        arena_pool.arenas[i] = NULL;
+      }
     }
+    free(arena_pool.arenas);
+    arena_pool.arenas = NULL;
   }
 
   arena_pool.head = 0;
+  arena_pool.pool_capacity = 0;
   arena_pool.initialized = false;
 
   LOG_DEBUG("Arena pool destroyed");
@@ -275,7 +295,7 @@ ecewo_arena_t *ecewo_arena_borrow(void) {
     arena_pool.arenas[arena_pool.head] = NULL;
 
 #ifdef ECEWO_DEBUG
-    int in_use = arena_pool.total_allocated - arena_pool.head;
+    uint32_t in_use = arena_pool.total_allocated - arena_pool.head;
     if (in_use > arena_pool.peak_usage)
       arena_pool.peak_usage = in_use;
 #endif
@@ -285,13 +305,8 @@ ecewo_arena_t *ecewo_arena_borrow(void) {
     return arena;
   }
 
-  // Pool is empty, check if we can grow
-  if (arena_pool.total_allocated >= ARENA_POOL_CAP) {
-    LOG_DEBUG("Arena pool exhausted! (max %d reached)", ARENA_POOL_CAP);
-    return NULL;
-  }
-
-  // Allocate new arena
+  // Pool's recycle cache is empty. Always try to allocate a fresh arena.
+  // Live arena count is bounded only by app->max_connections (and OS memory).
   arena = malloc(sizeof(ecewo_arena_t));
   if (!arena)
     return NULL;
@@ -304,12 +319,12 @@ ecewo_arena_t *ecewo_arena_borrow(void) {
   arena_pool.total_allocated++;
 
 #ifdef ECEWO_DEBUG
-  int in_use = arena_pool.total_allocated - arena_pool.head;
+  uint32_t in_use = arena_pool.total_allocated - arena_pool.head;
   if (in_use > arena_pool.peak_usage)
     arena_pool.peak_usage = in_use;
 
-  LOG_DEBUG("Arena pool: allocated new arena (total=%d/%d)",
-            arena_pool.total_allocated, ARENA_POOL_CAP);
+  LOG_DEBUG("Arena pool: allocated new arena (live=%u, cached=%u/%u)",
+            arena_pool.total_allocated, arena_pool.head, arena_pool.pool_capacity);
 #endif
 
   return arena;
@@ -343,13 +358,16 @@ void ecewo_arena_return(ecewo_arena_t *arena) {
     arena->end = arena->begin;
   }
 
-  if (arena_pool.head < ARENA_POOL_CAP) {
+  if (arena_pool.arenas && arena_pool.head < arena_pool.pool_capacity) {
     arena_pool.arenas[arena_pool.head++] = arena;
     arena_pool_try_shrink();
   } else {
-    // Pool is full, free directly
+    // Recycle cache is full or unallocated; free directly so live count
+    // does not climb without bound.
     arena_free(arena);
     free(arena);
+    if (arena_pool.total_allocated > 0)
+      arena_pool.total_allocated--;
   }
 }
 
@@ -360,19 +378,19 @@ void ecewo_arena_pool_stats(void) {
     return;
   }
 
-  uint16_t available = arena_pool.head;
-  uint16_t in_use = arena_pool.total_allocated - available;
+  uint32_t available = arena_pool.head;
+  uint32_t in_use = arena_pool.total_allocated - available;
   double available_mb = (available * ARENA_REGION_SIZE) / (1024.0 * 1024.0);
   double total_mb = (arena_pool.total_allocated * ARENA_REGION_SIZE) / (1024.0 * 1024.0);
 
   LOG_DEBUG("Arena Pool Statistics:");
-  LOG_DEBUG("  Available: %d/%d arenas (%.2f MB)",
-            available, arena_pool.total_allocated, available_mb);
-  LOG_DEBUG("  In use: %d arenas", in_use);
-  LOG_DEBUG("  Peak usage: %d arenas", arena_pool.peak_usage);
+  LOG_DEBUG("  Cached: %u/%u arenas (%.2f MB)",
+            available, arena_pool.pool_capacity, available_mb);
+  LOG_DEBUG("  In use: %u arenas", in_use);
+  LOG_DEBUG("  Peak usage: %u arenas", arena_pool.peak_usage);
   LOG_DEBUG("  Total allocated: %.2f MB", total_mb);
-  LOG_DEBUG("  Grow operations: %d", arena_pool.grow_count);
-  LOG_DEBUG("  Shrink operations: %d", arena_pool.shrink_count);
+  LOG_DEBUG("  Grow operations: %u", arena_pool.grow_count);
+  LOG_DEBUG("  Shrink operations: %u", arena_pool.shrink_count);
 }
 
 #endif
