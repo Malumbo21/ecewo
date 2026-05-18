@@ -308,6 +308,14 @@ int on_header_value_cb(llhttp_t *parser, const char *at, size_t length) {
   memcpy(key, context->current_header_field, context->header_field_length);
   key[context->header_field_length] = '\0';
 
+  // Header field names are case-insensitive.
+  // Normalize once here so lookups can use strcmp instead of strcasecmp.
+  for (size_t i = 0; i < context->header_field_length; i++) {
+    unsigned char c = (unsigned char)key[i];
+    if (c >= 'A' && c <= 'Z')
+      key[i] = (char)(c + ('a' - 'A'));
+  }
+
   char *val = ecewo_alloc(context->arena, length + 1);
   if (!val) {
     llhttp_set_error_reason(parser, ERROR_REASON_MEMORY_ALLOCATION);

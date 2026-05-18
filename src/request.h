@@ -25,6 +25,11 @@
 #include <stddef.h>
 #include <stdint.h>
 
+// Generic key/value pair used for headers, query string, and URL params.
+// For HEADERS, keys are lowercased at parse time (see on_header_value_cb in
+// http.c). Lookups must lowercase the query key before strcmp, or call
+// ecewo_header_get which does so automatically.
+// Query/URL param keys keep their original case.
 struct ecewo__req_item_s {
   const char *key;
   const char *value;

@@ -61,10 +61,25 @@ const char *ecewo_query(const ecewo_request_t *req, const char *key) {
 }
 
 const char *ecewo_header_get(const ecewo_request_t *req, const char *key) {
-  if (!req)
+  if (!req || !key)
     return NULL;
 
-  return get_req(req->headers, key, true);
+  // Header names are stored lowercased at parse time (see on_header_value_cb).
+  // Lowercase the lookup key into a stack buffer and do a plain strcmp.
+  // RFC 7230 §3.2.6 limits field-name to ~256 reasonable chars; bound at 128.
+  char lower[128];
+  size_t len = 0;
+  while (key[len] && len < sizeof(lower) - 1) {
+    unsigned char c = (unsigned char)key[len];
+    lower[len] = (c >= 'A' && c <= 'Z') ? (char)(c + ('a' - 'A')) : (char)c;
+    len++;
+  }
+  if (key[len] != '\0') {
+    // Pathologically long key; fall back to case-insensitive scan.
+    return get_req(req->headers, key, true);
+  }
+  lower[len] = '\0';
+  return get_req(req->headers, lower, false);
 }
 
 void ecewo_context_set(ecewo_request_t *req, const char *key, void *data) {
