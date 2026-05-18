@@ -75,6 +75,7 @@ static void client_free_server(ecewo_client_t *client) {
     return;
   if (client->connection_arena)
     ecewo_arena_return(client->connection_arena);
+  free(client->buffer); // safe on NULL; allocated lazily in server_alloc_buffer
   free(client); // ref-counted; freed here when the count reaches zero
 }
 
@@ -93,7 +94,10 @@ void ecewo_client_unref(ecewo_client_t *client) {
 }
 
 static void add_ecewo_client_to_list(ecewo__server_t *srv, ecewo_client_t *client) {
+  client->prev = NULL;
   client->next = srv->client_list_head;
+  if (srv->client_list_head)
+    srv->client_list_head->prev = client;
   srv->client_list_head = client;
 }
 
@@ -101,18 +105,16 @@ static void remove_client_from_list(ecewo__server_t *srv, ecewo_client_t *client
   if (!client)
     return;
 
-  if (srv->client_list_head == client) {
+  if (client->prev)
+    client->prev->next = client->next;
+  else if (srv->client_list_head == client)
     srv->client_list_head = client->next;
-    return;
-  }
 
-  ecewo_client_t *current = srv->client_list_head;
-  while (current && current->next != client) {
-    current = current->next;
-  }
+  if (client->next)
+    client->next->prev = client->prev;
 
-  if (current)
-    current->next = client->next;
+  client->prev = NULL;
+  client->next = NULL;
 }
 
 static void on_client_closed(uv_handle_t *handle) {
@@ -847,6 +849,16 @@ void server_alloc_buffer(uv_handle_t *handle, size_t suggested_size, uv_buf_t *b
     return;
   }
 
+  if (!client->buffer) {
+    client->buffer = malloc(READ_BUFFER_SIZE);
+    if (!client->buffer) {
+      buf->base = NULL;
+      buf->len = 0;
+      return;
+    }
+    client->read_buf = uv_buf_init(client->buffer, READ_BUFFER_SIZE);
+  }
+
   *buf = client->read_buf;
 }
 
@@ -999,7 +1011,7 @@ static void on_connection(uv_stream_t *server, int status) {
   }
 
   client->handle.data = client;
-  client->read_buf = uv_buf_init(client->buffer, READ_BUFFER_SIZE);
+  // client->buffer/read_buf are allocated lazily in server_alloc_buffer.
 
   if (uv_accept(server, (uv_stream_t *)&client->handle) == 0) {
     uv_tcp_nodelay(&client->handle, 1);

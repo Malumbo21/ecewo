@@ -144,12 +144,15 @@ ecewo__runtime_t *ecewo__runtime_get(void);
 struct ecewo_client_s {
   uv_tcp_t handle;
   uv_buf_t read_buf;
-  char buffer[READ_BUFFER_SIZE];
+  // Lazily allocated by server_alloc_buffer on the first read so idle/half-open
+  // accepts don't reserve READ_BUFFER_SIZE bytes up front.
+  char *buffer;
   bool closing;
   bool draining; // True while draining receive buffer before closing
   uint64_t last_activity;
   bool keep_alive_enabled;
   struct ecewo_client_s *next;
+  struct ecewo_client_s *prev;
 
   ecewo_arena_t *connection_arena; // Lives for the duration of the connection
 
