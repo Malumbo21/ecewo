@@ -12,7 +12,6 @@
 - [Documentation](#documentation)
 - [Example App](#example-app)
 - [Plugins](#plugins)
-- [Dependencies](#dependencies)
 - [Features](#features)
 - [Contributing](#contributing)
 - [License](#license)
@@ -126,41 +125,26 @@ Refer to the [docs](/docs/) for usage.
 
 ---
 
-## Dependencies
-
-- [libuv](https://github.com/libuv/libuv) for async event loop.
-- [llhttp](https://github.com/nodejs/llhttp) for HTTP parsing.
-- [rax](https://github.com/antirez/rax) for radix-tree router.
-- A customized arena allocator based on [tsoding/arena](https://github.com/tsoding/arena).
-
-No manual installation required for any of these dependencies.
-
----
-
 ## Features
-
-- Express.js-style API with routes, middleware, and handlers.
-- Single-threaded asynchronous event loop.
-- Radix-tree router.
-- Multiple app instances that share one event loop, each on its own port.
-- Configurable listen address with IPv4 and IPv6 support (`"0.0.0.0"`, `"::"`, specific NIC, etc.).
-- Opaque public types: safe ABI for shared-library distribution and FFI bindings.
 
 ### Core
 
+- Single-threaded asynchronous event loop built on [libuv](https://github.com/libuv/libuv).
+- HTTP/1.1 parsing based on [llhttp](https://github.com/nodejs/llhttp) for HTTP parsing.
+- Radix-tree router built on [rax](https://github.com/antirez/rax).
+- Arena memory management with a customized allocator based on [tsoding/arena](https://github.com/tsoding/arena).
 - Express.js-style API with routes, middleware, and handlers.
-- Single-threaded asynchronous event loop built on libuv.
 - Single public header (`ecewo.h`); every public symbol is `ecewo_*`-prefixed.
-- Builds as a static or shared library (`-DECEWO_BUILD_SHARED=ON`) with hidden visibility and a stable `SOVERSION`.
-- Multiple `ecewo_app_t` instances can share one event loop, each on its own port.
+- Builds as a static or shared library (`-DECEWO_BUILD_SHARED=ON`) with hidden visibility.
+- Multiple app instances can share one event loop, each on its own port.
 - Configurable listen address with IPv4 and IPv6 support (`"0.0.0.0"`, `"::"`, specific NIC, etc.).
-- Opaque public types — safe ABI for shared-library distribution and FFI bindings.
+- Opaque public types; safe ABI for shared-library distribution and FFI bindings.
 
 ### Routing
 
 - Methods: `GET`, `POST`, `PUT`, `PATCH`, `DELETE`, `HEAD`, `OPTIONS`.
 - Dynamic path parameters (`/users/:id`) and wildcard routes (`*`).
-- O(1) average-case route lookup via a radix tree (rax).
+- O(1) average-case route lookup via a radix tree.
 - Two registration styles:
   - Convenience macros (`ECEWO_GET(app, path, ...)`).
   - Builder API (`ecewo_route_new` / `ecewo_route_middleware` / `ecewo_route_handler`) for runtime registration, plugins, and FFI bindings.
@@ -176,11 +160,10 @@ No manual installation required for any of these dependencies.
 ### Request handling
 
 - Accessors for path params (`ecewo_param`), query string (`ecewo_query`), and headers (`ecewo_header_get`).
-- Case-insensitive header lookup with O(1) cost (names lowercased at parse time).
+- Case-insensitive header lookup with O(1) cost.
 - Body as raw bytes (`uint8_t*` + length). No UTF-8 assumption.
 - Buffered body by default; opt-in streaming mode via `ecewo_body_stream` middleware with `on_data` / `on_end` callbacks.
 - Configurable body size limit per request, with `413 Payload Too Large` rejection.
-- HTTP/1.0 and HTTP/1.1 version accessors (`ecewo_req_http_major/minor`).
 
 ### Response handling
 
@@ -225,28 +208,6 @@ No manual installation required for any of these dependencies.
 ### Configuration
 
 Tune per-app: max connections, listen backlog, idle timeout, request timeout, cleanup interval, shutdown drain timeout, listen address. All defaults are sensible; setters apply before `ecewo_bind` / `ecewo_listen`. See [docs/10.configurations.md](docs/10.configurations.md).
-
-### Performance
-
-- O(1) header lookup.
-- O(1) client list removal.
-- Lazy read-buffer allocation — buffers are only allocated when needed.
-- Radix-tree router with first-match-wins semantics.
-- Mutex-free arena pool.
-- Avoids arena copies of method, path, and body during request population.
-
-### Tooling and quality
-
-- 28+ test executables covering routing, middleware, body buffering and streaming, workers, timers, concurrency, edge cases, and multi-app.
-- Built-in sanitizer build options: `-DECEWO_ASAN=ON`, `-DECEWO_UBSAN=ON`, `-DECEWO_MSAN=ON`, `-DECEWO_TSAN=ON`.
-- libFuzzer targets for the router and route registration (`-DECEWO_BUILD_FUZZ=ON`).
-- CI on Linux (GCC and Clang), macOS, and Windows (MinGW UCRT64).
-- Valgrind memcheck integration in CI.
-- `clang-tidy` and `clang-format` configurations checked into the repo.
-
-### Plugin ecosystem
-
-Off-the-shelf plugins: cluster (multithreading), cookies, CORS, file system, helmet (security headers), mocking, PostgreSQL, sessions, static file serving. See [Plugins](#plugins).
 
 ---
 
