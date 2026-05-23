@@ -188,7 +188,7 @@ Refer to the [docs](/docs/) for usage.
 
 ### Async and concurrency
 
-- `ecewo_spawn` and `ecewo_spawn_http` offload blocking work to the libuv thread pool, then resume on the loop thread.
+- `ecewo_spawn` offloads blocking work to the libuv thread pool, then resumes on the loop thread.
 - Per-request deadline (`ecewo_timeout_request`).
 - One-shot timeouts (`ecewo_timeout`) and recurring intervals (`ecewo_interval`).
 - Process-wide async work counter (`ecewo_increment_async_work` / `ecewo_decrement_async_work`) so background tasks keep the loop alive.

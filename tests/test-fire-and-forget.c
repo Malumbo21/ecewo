@@ -46,7 +46,7 @@ void handler_fire_and_forget(ecewo_request_t *req, ecewo_response_t *res) {
   ctx->arena = bg_arena;
   ctx->increment = 10;
 
-  ecewo_spawn(ctx, background_work, NULL);
+  ecewo_spawn(NULL, ctx, background_work, NULL);
   ecewo_send_text(res, ECEWO_ACCEPTED, "Status: Accepted");
 }
 

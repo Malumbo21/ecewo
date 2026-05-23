@@ -64,7 +64,7 @@ void middleware_async_auth(ecewo_request_t *req, ecewo_response_t *res, ecewo_ne
   ctx->req = req;
   ctx->next = next;
 
-  ecewo_spawn_http(res, ctx, auth_work, auth_done);
+  ecewo_spawn(res, ctx, auth_work, auth_done);
 }
 
 void handler_protected(ecewo_request_t *req, ecewo_response_t *res) {

@@ -25,7 +25,6 @@
 #include "tester.h"
 
 typedef struct {
-  ecewo_response_t *res;
   int result;
 } compute_ctx_t;
 
@@ -34,19 +33,18 @@ static void compute_work(void *context) {
   ctx->result = 42 * 2;
 }
 
-static void compute_done(void *context) {
+static void compute_done(ecewo_response_t *res, void *context) {
   compute_ctx_t *ctx = (compute_ctx_t *)context;
 
-  char *response = ecewo_sprintf(ecewo_res_arena(ctx->res), "result=%d", ctx->result);
-  ecewo_send_text(ctx->res, 200, response);
+  char *response = ecewo_sprintf(ecewo_res_arena(res), "result=%d", ctx->result);
+  ecewo_send_text(res, 200, response);
 }
 
 void handler_compute(ecewo_request_t *req, ecewo_response_t *res) {
   compute_ctx_t *ctx = ecewo_alloc(ecewo_req_arena(req), sizeof(compute_ctx_t));
-  ctx->res = res;
   ctx->result = 0;
 
-  ecewo_spawn(ctx, compute_work, compute_done);
+  ecewo_spawn(res, ctx, compute_work, compute_done);
 }
 
 int test_spawn_with_response(void) {

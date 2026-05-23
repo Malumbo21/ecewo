@@ -25,7 +25,6 @@
 #include "tester.h"
 
 typedef struct {
-  ecewo_response_t *res;
   int total;
   int completed;
   int results[3];
@@ -47,26 +46,25 @@ static void parallel_work_3(void *context) {
   ctx->results[2] = 30;
 }
 
-static void parallel_done(void *context) {
+static void parallel_done(ecewo_response_t *res, void *context) {
   parallel_ctx_t *ctx = (parallel_ctx_t *)context;
 
   ctx->completed++;
 
   if (ctx->has_error && ctx->completed == 1) {
-    ecewo_send_text(ctx->res, 500, "ecewo_spawn failed");
+    ecewo_send_text(res, 500, "ecewo_spawn failed");
     return;
   }
 
   if (ctx->completed == ctx->total && !ctx->has_error) {
     int sum = ctx->results[0] + ctx->results[1] + ctx->results[2];
-    char *response = ecewo_sprintf(ecewo_res_arena(ctx->res), "{\"sum\":%d}", sum);
-    ecewo_send_json(ctx->res, 200, response);
+    char *response = ecewo_sprintf(ecewo_res_arena(res), "{\"sum\":%d}", sum);
+    ecewo_send_json(res, 200, response);
   }
 }
 
 void handler_parallel(ecewo_request_t *req, ecewo_response_t *res) {
   parallel_ctx_t *ctx = ecewo_alloc(ecewo_req_arena(req), sizeof(parallel_ctx_t));
-  ctx->res = res;
   ctx->total = 3;
   ctx->completed = 0;
   ctx->results[0] = 0;
@@ -74,9 +72,9 @@ void handler_parallel(ecewo_request_t *req, ecewo_response_t *res) {
   ctx->results[2] = 0;
   ctx->has_error = false;
 
-  ecewo_spawn(ctx, parallel_work_1, parallel_done);
-  ecewo_spawn(ctx, parallel_work_2, parallel_done);
-  ecewo_spawn(ctx, parallel_work_3, parallel_done);
+  ecewo_spawn(res, ctx, parallel_work_1, parallel_done);
+  ecewo_spawn(res, ctx, parallel_work_2, parallel_done);
+  ecewo_spawn(res, ctx, parallel_work_3, parallel_done);
 }
 
 int test_spawn_parallel(void) {

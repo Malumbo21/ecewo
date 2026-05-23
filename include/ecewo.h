@@ -497,23 +497,18 @@ ECEWO_EXPORT void *ecewo_context_get(ecewo_request_t *req, const char *key);
 // ASYNC TASK SPAWN
 // ---------------------------------------------------------------------------
 
-/** Callback type used for background work in ecewo_spawn() and ecewo_spawn_http().
- *  context is the user-supplied pointer passed at spawn time. */
+/** Callback type for the work step of ecewo_spawn(); runs on a thread-pool thread. */
 typedef void (*ecewo_spawn_handler_t)(void *context);
 
-/** Callback type for the completion step of ecewo_spawn_http().
- *  Called on the event-loop thread after work_fn finishes; safe to call ecewo_send() here. */
+/** Callback type for the completion step of ecewo_spawn(); runs on the event-loop thread.
+ *  res is NULL for background tasks, non-NULL for HTTP tasks. Safe to call ecewo_send() here. */
 typedef void (*ecewo_spawn_done_t)(ecewo_response_t *res, void *context);
 
-/** Run work_fn(context) on a thread-pool thread, then call done_fn(context) on the event loop.
- *  Use this for background tasks that are not tied to an HTTP request/response.
- *  Returns 0 on success, -1 on error. */
-ECEWO_EXPORT int ecewo_spawn(void *context, ecewo_spawn_handler_t work_fn, ecewo_spawn_handler_t done_fn);
-
 /** Run work_fn(context) on a thread-pool thread, then call done_fn(res, context) on the event loop.
- *  Use this to offload blocking work inside a request handler (e.g. database queries, file I/O).
- *  done_fn is the right place to call ecewo_send(). Returns 0 on success, -1 on error. */
-ECEWO_EXPORT int ecewo_spawn_http(ecewo_response_t *res, void *context, ecewo_spawn_handler_t work_fn, ecewo_spawn_done_t done_fn);
+ *  Pass res=NULL for background tasks not tied to a request; pass the request res to offload
+ *  blocking work (e.g. database queries, file I/O) inside a handler. done_fn receives the same
+ *  res so ecewo_send() can be called there. Returns 0 on success, -1 on error. */
+ECEWO_EXPORT int ecewo_spawn(ecewo_response_t *res, void *context, ecewo_spawn_handler_t work_fn, ecewo_spawn_done_t done_fn);
 
 // ---------------------------------------------------------------------------
 // BODY STREAMING

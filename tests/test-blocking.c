@@ -40,7 +40,6 @@ static uint64_t get_thread_id(void) {
 // ============================================================================
 
 typedef struct {
-  ecewo_response_t *res;
   uint64_t main_thread_id;
   uint64_t work_thread_id;
   uint64_t done_thread_id;
@@ -52,16 +51,16 @@ static void thread_test_work(void *context) {
   uv_sleep(100);
 }
 
-static void thread_test_done(void *context) {
+static void thread_test_done(ecewo_response_t *res, void *context) {
   thread_test_ctx_t *ctx = context;
   ctx->done_thread_id = get_thread_id();
 
-  char *response = ecewo_sprintf(ecewo_res_arena(ctx->res), "%" PRIu64 ",%" PRIu64 ",%" PRIu64,
+  char *response = ecewo_sprintf(ecewo_res_arena(res), "%" PRIu64 ",%" PRIu64 ",%" PRIu64,
                                  ctx->main_thread_id,
                                  ctx->work_thread_id,
                                  ctx->done_thread_id);
 
-  ecewo_send_text(ctx->res, 200, response);
+  ecewo_send_text(res, 200, response);
 }
 
 // ============================================================================
@@ -71,12 +70,11 @@ static void thread_test_done(void *context) {
 void handler_thread_test(ecewo_request_t *req, ecewo_response_t *res) {
   (void)req;
   thread_test_ctx_t *ctx = ecewo_alloc(ecewo_res_arena(res), sizeof(thread_test_ctx_t));
-  ctx->res = res;
   ctx->main_thread_id = get_thread_id();
   ctx->work_thread_id = 0;
   ctx->done_thread_id = 0;
 
-  ecewo_spawn(ctx, thread_test_work, thread_test_done);
+  ecewo_spawn(res, ctx, thread_test_work, thread_test_done);
 }
 
 void handler_get_main_thread(ecewo_request_t *req, ecewo_response_t *res) {

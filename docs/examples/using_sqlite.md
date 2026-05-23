@@ -212,7 +212,7 @@ void add_user(ecewo_request_t *req, ecewo_response_t *res) {
     cJSON_Delete(json);
 
     // Spawn async work
-    ecewo_spawn_http(res, ctx, add_user_work, add_user_done);
+    ecewo_spawn(res, ctx, add_user_work, add_user_done);
 }
 ```
 
@@ -315,7 +315,7 @@ void get_all_users(ecewo_request_t *req, ecewo_response_t *res) {
     ctx->status = 500;
     ctx->error_message = "Unknown error";
 
-    ecewo_spawn_http(res, ctx, get_users_work, get_users_done);
+    ecewo_spawn(res, ctx, get_users_work, get_users_done);
 }
 
 // ... add_user functions from previous section ...
