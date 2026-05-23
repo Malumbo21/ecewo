@@ -54,7 +54,11 @@ int main(void) {
     // to use it as PORT
     const int PORT = (int)atoi(port);
 
-    ecewo_listen(app, PORT);
+    if (ecewo_listen(app, PORT) != 0) {
+        fprintf(stderr, "Failed to start server\n");
+        return 1;
+    }
+
     return 0;
 }
 ```

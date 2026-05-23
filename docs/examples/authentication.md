@@ -11,6 +11,7 @@
 #include "ecewo.h"
 #include "ecewo/session.h"
 #include "cJSON.h"
+#include <stdio.h>
 
 // Example user info (it must be saved in a database)
 const char *STATIC_NAME = "John Doe";
@@ -92,8 +93,16 @@ int main(void) {
 
     ECEWO_POST(app, "/login", handle_login);
 
-    ecewo_atexit(app, cleanup_app, NULL);
-    ecewo_listen(app, 3000);
+    if (ecewo_atexit(app, cleanup_app, NULL) != 0) {
+        fprintf(stderr, "Failed to register shutdown callback\n");
+        return 1;
+    }
+
+    if (ecewo_listen(app, 3000) != 0) {
+        fprintf(stderr, "Failed to start server\n");
+        return 1;
+    }
+
     return 0;
 }
 ```
@@ -153,8 +162,16 @@ int main(void) {
     ECEWO_POST(app, "/login", handle_login);
     ECEWO_GET(app, "/logout", handle_logout); // We also added it
 
-    ecewo_atexit(app, cleanup_app, NULL);
-    ecewo_listen(app, 3000);
+    if (ecewo_atexit(app, cleanup_app, NULL) != 0) {
+        fprintf(stderr, "Failed to register shutdown callback\n");
+        return 1;
+    }
+
+    if (ecewo_listen(app, 3000) != 0) {
+        fprintf(stderr, "Failed to start server\n");
+        return 1;
+    }
+
     return 0;
 }
 ```
@@ -240,8 +257,16 @@ int main(void) {
     ECEWO_POST(app, "/login", handle_login);
     ECEWO_POST(app, "/logout", handle_logout);
 
-    ecewo_atexit(app, cleanup_app, NULL);
-    ecewo_listen(app, 3000);
+    if (ecewo_atexit(app, cleanup_app, NULL) != 0) {
+        fprintf(stderr, "Failed to register shutdown callback\n");
+        return 1;
+    }
+
+    if (ecewo_listen(app, 3000) != 0) {
+        fprintf(stderr, "Failed to start server\n");
+        return 1;
+    }
+
     return 0;
 }
 ```
@@ -306,8 +331,16 @@ int main(void) {
     ECEWO_POST(app, "/login", handle_login);
     ECEWO_POST(app, "/logout", handle_logout);
 
-    ecewo_atexit(app, cleanup_app, NULL);
-    ecewo_listen(app, 3000);
+    if (ecewo_atexit(app, cleanup_app, NULL) != 0) {
+        fprintf(stderr, "Failed to register shutdown callback\n");
+        return 1;
+    }
+
+    if (ecewo_listen(app, 3000) != 0) {
+        fprintf(stderr, "Failed to start server\n");
+        return 1;
+    }
+
     return 0;
 }
 ```

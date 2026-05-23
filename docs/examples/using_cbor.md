@@ -65,7 +65,11 @@ int main(void) {
 
     ECEWO_GET(app, "/cbor", hello_world_cbor);
 
-    ecewo_listen(app, 3000);
+    if (ecewo_listen(app, 3000) != 0) {
+        fprintf(stderr, "Failed to start server\n");
+        return 1;
+    }
+
     return 0;
 }
 ```
@@ -172,7 +176,11 @@ int main(void) {
 
     ECEWO_POST(app, "/cbor", handle_user_cbor);
 
-    ecewo_listen(app, 3000);
+    if (ecewo_listen(app, 3000) != 0) {
+        fprintf(stderr, "Failed to start server\n");
+        return 1;
+    }
+
     return 0;
 }
 ```

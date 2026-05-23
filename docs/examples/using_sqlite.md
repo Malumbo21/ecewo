@@ -351,9 +351,16 @@ int main(void) {
     ECEWO_GET(app, "/users", get_all_users);
     ECEWO_POST(app, "/user", add_user);
 
-    ecewo_atexit(app, destroy_app, NULL);
+    if (ecewo_atexit(app, destroy_app, NULL) != 0) {
+        fprintf(stderr, "Failed to register shutdown callback\n");
+        return 1;
+    }
 
-    ecewo_listen(app, 3000);
+    if (ecewo_listen(app, 3000) != 0) {
+        fprintf(stderr, "Failed to start server\n");
+        return 1;
+    }
+
     return 0;
 }
 ```

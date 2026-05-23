@@ -1408,18 +1408,20 @@ void ecewo_run(void) {
   runtime_cleanup(rt);
 }
 
-void ecewo_listen(ecewo_app_t *app, uint16_t port) {
+int ecewo_listen(ecewo_app_t *app, uint16_t port) {
   if (ecewo_bind(app, port) != 0)
-    return;
+    return -1;
 
   ecewo_run();
+  return 0;
 }
 
-void ecewo_atexit(ecewo_app_t *app, void (*callback)(void *user_data), void *user_data) {
+int ecewo_atexit(ecewo_app_t *app, void (*callback)(void *user_data), void *user_data) {
   if (!app || !app->server || !callback)
-    return;
+    return -1;
   app->server->atexit_cb = callback;
   app->server->atexit_user_data = user_data;
+  return 0;
 }
 
 bool ecewo_is_running(ecewo_app_t *app) {

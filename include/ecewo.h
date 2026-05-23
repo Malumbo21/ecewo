@@ -178,8 +178,9 @@ ECEWO_EXPORT int ecewo_bind(ecewo_app_t *app, uint16_t port);
 ECEWO_EXPORT void ecewo_run(void);
 
 /** Bind to port and start the event loop in a single call.
- *  Equivalent to `ecewo_bind()` + `ecewo_run()`. Blocks until shutdown. */
-ECEWO_EXPORT void ecewo_listen(ecewo_app_t *app, uint16_t port);
+ *  Equivalent to `ecewo_bind()` + `ecewo_run()`. Blocks until shutdown.
+ *  Returns 0 on success, -1 on error. */
+ECEWO_EXPORT int ecewo_listen(ecewo_app_t *app, uint16_t port);
 
 /** Initiate a graceful shutdown of this app. Closes the listener, drains active
  *  connections up to shutdown_timeout_ms, then forcibly closes them, fires the
@@ -191,10 +192,11 @@ ECEWO_EXPORT void ecewo_shutdown(ecewo_app_t *app);
 
 /** Register a callback to be called during shutdown, before the event loop exits.
  *  Useful for releasing resources such as database connections or thread pools.
- *  user_data is passed to callback unchanged; pass NULL if not needed. */
-ECEWO_EXPORT void ecewo_atexit(ecewo_app_t *app,
-                               void (*callback)(void *user_data),
-                               void *user_data);
+ *  user_data is passed to callback unchanged; pass NULL if not needed.
+ *  Returns 0 on success, -1 on error. */
+ECEWO_EXPORT int ecewo_atexit(ecewo_app_t *app,
+                              void (*callback)(void *user_data),
+                              void *user_data);
 
 // ---------------------------------------------------------------------------
 // TIMER FUNCTIONS

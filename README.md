@@ -1,7 +1,7 @@
 <div align="center">
   <img src="https://raw.githubusercontent.com/ecewo/ecewo/main/img/ecewo.svg" />
   <h1>Express-C Effect for Web Operations</h1>
-  Asynchronous web framework for C — inspired by <a href="https://expressjs.com">express.js</a>
+  Asynchronous, single-threaded and FFI-friendly C web framework with a minimal embedded runtime. Inspired by the simplicity of <a href="https://expressjs.com">express.js</a>.
 </div>
 
 ## Table of Contents
@@ -45,7 +45,11 @@ int main(void) {
 
   ECEWO_GET(app, "/", hello_world);
 
-  ecewo_listen(app, 3000);
+  if (ecewo_listen(app, 3000) != 0) {
+    fprintf(stderr, "Failed to start server\n");
+    return -1;
+  }
+
   return 0;
 }
 ```
