@@ -51,3 +51,21 @@ ecewo_define_plugin(
   REPO https://github.com/ecewo/ecewo-static
   DEFAULT_VERSION main
 )
+
+ecewo_define_plugin(
+  ws
+  REPO https://github.com/ecewo/ecewo-ws
+  DEFAULT_VERSION main
+)
+
+ecewo_define_plugin(
+  https
+  REPO https://github.com/ecewo/ecewo-https
+  DEFAULT_VERSION main
+)
+
+ecewo_define_plugin(
+  multipart
+  REPO https://github.com/ecewo/ecewo-multipart
+  DEFAULT_VERSION main
+)
