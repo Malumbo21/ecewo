@@ -25,201 +25,216 @@
 #include "server.h"
 #include <stdlib.h>
 
-// ============= SPAWN (Background work) =============
+typedef enum {
+  SPAWN_BACKGROUND,
+  SPAWN_RESPONSE
+} spawn_type_t;
 
 typedef struct {
   uv_work_t work;
   uv_async_t async_send;
   void *context;
   ecewo_spawn_handler_t work_fn;
-  ecewo_spawn_handler_t result_fn;
+} spawn_base_t;
+
+typedef struct {
+  spawn_base_t base;
+  spawn_type_t type;
+  union {
+    struct {
+      ecewo_spawn_handler_t result_fn;
+    } background;
+    struct {
+      ecewo_spawn_done_t done_fn;
+      ecewo_response_t *res;
+      ecewo_client_t *client;
+    } response;
+  };
 } spawn_t;
 
 static void spawn_cleanup_cb(uv_handle_t *handle) {
-  spawn_t *t = (spawn_t *)handle->data;
-  if (t)
-    free(t);
+  spawn_t *task = (spawn_t *)handle->data;
+
+  if (!task)
+    return;
+
+  if (task->type == SPAWN_RESPONSE) {
+    if (task->response.client)
+      ecewo_client_unref(task->response.client);
+  }
+
+  free(task);
 }
 
 static void spawn_async_cb(uv_async_t *handle) {
-  spawn_t *t = (spawn_t *)handle->data;
-  if (!t)
+  spawn_t *task = (spawn_t *)handle->data;
+  if (!task)
     return;
 
-  if (t->result_fn)
-    t->result_fn(t->context);
+  switch (task->type) {
+  case SPAWN_BACKGROUND: {
+    if (task->background.result_fn)
+      task->background.result_fn(task->base.context);
+
+    break;
+  }
+
+  case SPAWN_RESPONSE: {
+    ecewo_response_t *res = task->response.res;
+    ecewo_client_t *client = task->response.client;
+
+    if (!client)
+      break;
+
+    if (!client->valid || client->closing)
+      break;
+
+    if (uv_is_closing((uv_handle_t *)&client->handle))
+      break;
+
+    if (task->response.done_fn)
+      task->response.done_fn(res, task->base.context);
+
+    break;
+  }
+
+  default:
+    break;
+  }
 
   uv_close((uv_handle_t *)handle, spawn_cleanup_cb);
 }
 
 static void spawn_work_cb(uv_work_t *req) {
-  spawn_t *t = (spawn_t *)req->data;
-  if (t && t->work_fn)
-    t->work_fn(t->context);
+  spawn_t *task = (spawn_t *)req->data;
+  if (task && task->base.work_fn)
+    task->base.work_fn(task->base.context);
 }
 
 static void spawn_after_work_cb(uv_work_t *req, int status) {
-  spawn_t *t = (spawn_t *)req->data;
-  if (!t)
+  spawn_t *task = (spawn_t *)req->data;
+  if (!task)
     return;
 
   if (status < 0)
-    LOG_ERROR("Spawn execution failed");
+    LOG_ERROR("Worker spawn execution failed");
 
-  uv_async_send(&t->async_send);
+  uv_async_send(&task->base.async_send);
 }
 
-int ecewo_spawn(void *context, ecewo_spawn_handler_t work_fn, ecewo_spawn_handler_t done_fn) {
-  uv_loop_t *loop = ecewo_get_loop();
+static int spawn_internal(
+    uv_loop_t *loop,
+    spawn_type_t type,
+    void *context,
+    ecewo_spawn_handler_t work_fn,
+    ecewo_spawn_handler_t result_fn,
+    ecewo_spawn_done_t done_fn,
+    ecewo_response_t *res,
+    ecewo_client_t *client) {
+
   if (!loop || !work_fn)
     return -1;
 
-  // Freed in spawn_cleanup_cb after the uv_async handle closes.
   spawn_t *task = calloc(1, sizeof(spawn_t));
   if (!task)
     return -1;
 
-  if (uv_async_init(loop, &task->async_send, spawn_async_cb) != 0) {
+  if (uv_async_init(loop, &task->base.async_send, spawn_async_cb) != 0) {
     free(task);
     return -1;
   }
 
-  task->work.data = task;
-  task->async_send.data = task;
-  task->context = context;
-  task->work_fn = work_fn;
-  task->result_fn = done_fn;
+  task->type = type;
+
+  task->base.work.data = task;
+  task->base.async_send.data = task;
+
+  task->base.context = context;
+  task->base.work_fn = work_fn;
+
+  switch (type) {
+  case SPAWN_BACKGROUND:
+    task->background.result_fn = result_fn;
+    break;
+
+  case SPAWN_RESPONSE:
+    task->response.done_fn = done_fn;
+    task->response.res = res;
+    task->response.client = client;
+
+    if (client)
+      ecewo_client_ref(client);
+
+    break;
+  }
 
   int result = uv_queue_work(
       loop,
-      &task->work,
+      &task->base.work,
       spawn_work_cb,
       spawn_after_work_cb);
 
   if (result != 0) {
-    uv_close((uv_handle_t *)&task->async_send, NULL);
+    uv_close((uv_handle_t *)&task->base.async_send, NULL);
+
+    if (type == SPAWN_RESPONSE && client)
+      ecewo_client_unref(client);
+
     free(task);
+
     return result;
   }
 
   return 0;
 }
 
-// ============= SPAWN_HTTP (With response) =============
+int ecewo_spawn(
+    void *context,
+    ecewo_spawn_handler_t work_fn,
+    ecewo_spawn_handler_t done_fn) {
 
-typedef struct {
-  uv_work_t work;
-  uv_async_t async_send;
-  void *context;
-  ecewo_spawn_handler_t work_fn;
-  ecewo_spawn_done_t done_fn;
-  ecewo_response_t *res;
-  ecewo_client_t *client;
-} spawn_http_t;
+  uv_loop_t *loop = ecewo_get_loop();
 
-static void spawn_http_cleanup_cb(uv_handle_t *handle) {
-  spawn_http_t *t = (spawn_http_t *)handle->data;
-
-  if (t) {
-    if (t->client)
-      ecewo_client_unref(t->client);
-    free(t);
-  }
+  return spawn_internal(
+      loop,
+      SPAWN_BACKGROUND,
+      context,
+      work_fn,
+      done_fn,
+      NULL,
+      NULL,
+      NULL);
 }
 
-static void spawn_http_async_cb(uv_async_t *handle) {
-  spawn_http_t *t = (spawn_http_t *)handle->data;
+int ecewo_spawn_http(
+    ecewo_response_t *res,
+    void *context,
+    ecewo_spawn_handler_t work_fn,
+    ecewo_spawn_done_t done_fn) {
 
-  if (!t)
-    return;
-
-  ecewo_response_t *res = t->res;
-  ecewo_client_t *client = t->client;
-
-  if (!client) {
-    uv_close((uv_handle_t *)handle, spawn_http_cleanup_cb);
-    return;
-  }
-
-  if (!client->valid || client->closing) {
-    uv_close((uv_handle_t *)handle, spawn_http_cleanup_cb);
-    return;
-  }
-
-  if (uv_is_closing((uv_handle_t *)&client->handle)) {
-    uv_close((uv_handle_t *)handle, spawn_http_cleanup_cb);
-    return;
-  }
-
-  if (t->done_fn)
-    t->done_fn(res, t->context);
-
-  uv_close((uv_handle_t *)handle, spawn_http_cleanup_cb);
-}
-
-static void spawn_http_work_cb(uv_work_t *req) {
-  spawn_http_t *t = (spawn_http_t *)req->data;
-  if (t && t->work_fn)
-    t->work_fn(t->context);
-}
-
-static void spawn_http_after_work_cb(uv_work_t *req, int status) {
-  spawn_http_t *t = (spawn_http_t *)req->data;
-  if (!t)
-    return;
-
-  if (status < 0)
-    LOG_ERROR("Async spawn execution failed");
-
-  uv_async_send(&t->async_send);
-}
-
-int ecewo_spawn_http(ecewo_response_t *res, void *context, ecewo_spawn_handler_t work_fn, ecewo_spawn_done_t done_fn) {
-
-  if (!res || !work_fn)
+  if (!res)
     return -1;
 
-  if (!res->ecewo__client_socket || !((uv_tcp_t *)res->ecewo__client_socket)->data)
+  if (!res->ecewo__client_socket)
     return -1;
 
-  ecewo_client_t *client = (ecewo_client_t *)((uv_tcp_t *)res->ecewo__client_socket)->data;
+  uv_tcp_t *socket = (uv_tcp_t *)res->ecewo__client_socket;
+
+  if (!socket->data)
+    return -1;
+
+  ecewo_client_t *client = socket->data;
+
   if (!client->srv || !client->srv->runtime)
     return -1;
-  uv_loop_t *loop = client->srv->runtime->loop;
 
-  // Freed in spawn_http_cleanup_cb after the uv_async handle closes.
-  spawn_http_t *task = calloc(1, sizeof(spawn_http_t));
-  if (!task)
-    return -1;
-
-  if (uv_async_init(loop, &task->async_send, spawn_http_async_cb) != 0) {
-    free(task);
-    return -1;
-  }
-
-  task->work.data = task;
-  task->async_send.data = task;
-  task->context = context;
-  task->work_fn = work_fn;
-  task->done_fn = done_fn;
-
-  task->res = res;
-  task->client = client;
-  ecewo_client_ref(task->client);
-
-  int result = uv_queue_work(
-      loop,
-      &task->work,
-      spawn_http_work_cb,
-      spawn_http_after_work_cb);
-
-  if (result != 0) {
-    uv_close((uv_handle_t *)&task->async_send, NULL);
-    if (task->client)
-      ecewo_client_unref(task->client);
-    free(task);
-    return result;
-  }
-
-  return 0;
+  return spawn_internal(
+      client->srv->runtime->loop,
+      SPAWN_RESPONSE,
+      context,
+      work_fn,
+      NULL,
+      done_fn,
+      res,
+      client);
 }
