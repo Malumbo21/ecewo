@@ -280,7 +280,7 @@ static int dispatch(ecewo__server_t *srv,
     }
   }
 
-  if (!ctx->on_body_chunk && has_body && (content_length >= (long)BUFFERED_BODY_MAX_SIZE || is_chunked)) {
+  if (!has_stream_middleware && has_body && (content_length >= (long)BUFFERED_BODY_MAX_SIZE || is_chunked)) {
     ecewo_header_set(res, "Content-Type", "text/plain");
     res->keep_alive = false;
     ecewo_send(res, 413, "Payload Too Large", 17);
