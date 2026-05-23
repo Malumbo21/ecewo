@@ -311,6 +311,27 @@ static int dispatch(ecewo__server_t *srv,
   return 0;
 }
 
+// Runs a buffered handler whose execution was deferred at headers-complete
+// because the body had not yet fully arrived. Attaches the now-complete
+// buffered body to the saved req and runs the saved middleware chain/handler.
+static void run_pending_handler(ecewo_client_t *client, http_context_t *ctx, ecewo__server_t *srv) {
+  client->handler_pending = false;
+
+  ecewo_request_t *preq = client->pending_req;
+  ecewo_response_t *pres = client->pending_res;
+  if (!preq || !pres)
+    return;
+
+  preq->body = ctx->body_length > 0 ? ctx->body : NULL;
+  preq->body_len = ctx->body_length;
+
+  MiddlewareInfo *pmw = (MiddlewareInfo *)client->pending_mw;
+  if (pmw)
+    chain_start(preq, pres, pmw, srv);
+  else if (client->pending_handler)
+    client->pending_handler(preq, pres);
+}
+
 int router(ecewo_client_t *client, const char *request_data, size_t request_len) {
   if (!client || !request_data || request_len == 0) {
     if (client)
@@ -392,18 +413,7 @@ int router(ecewo_client_t *client, const char *request_data, size_t request_len)
         client->stream_res = NULL;
         body_stream_complete(req);
       } else if (client->handler_pending) {
-        client->handler_pending = false;
-        ecewo_request_t *preq = client->pending_req;
-        ecewo_response_t *pres = client->pending_res;
-        if (preq && pres) {
-          preq->body = ctx->body_length > 0 ? ctx->body : NULL;
-          preq->body_len = ctx->body_length;
-          MiddlewareInfo *pmw = (MiddlewareInfo *)client->pending_mw;
-          if (pmw)
-            chain_start(preq, pres, pmw, srv);
-          else if (client->pending_handler)
-            client->pending_handler(preq, pres);
-        }
+        run_pending_handler(client, ctx, srv);
       }
       if (!client->valid)
         goto done;
@@ -477,6 +487,25 @@ int router(ecewo_client_t *client, const char *request_data, size_t request_len)
     retval = (sres && !sres->replied)
         ? REQUEST_PENDING
         : (sres && sres->keep_alive ? REQUEST_KEEP_ALIVE : REQUEST_CLOSE);
+    goto done;
+  }
+
+  // A buffered request whose body arrived across multiple TCP reads: headers
+  // were parsed and the handler deferred on an earlier read; now that the body
+  // is complete, run the deferred handler on the saved req instead of
+  // re-matching the route and dispatching a fresh req/res.
+  if (!ctx->on_body_chunk && client->handler_pending) {
+    ecewo_response_t *pres = client->pending_res;
+    run_pending_handler(client, ctx, srv);
+    if (!client->valid)
+      goto done;
+    if (client->taken_over) {
+      retval = REQUEST_PENDING;
+      goto done;
+    }
+    retval = (pres && !pres->replied)
+        ? REQUEST_PENDING
+        : (pres && pres->keep_alive ? REQUEST_KEEP_ALIVE : REQUEST_CLOSE);
     goto done;
   }
 
