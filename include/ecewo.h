@@ -31,6 +31,7 @@ extern "C" {
 #include <stdbool.h>
 #include <string.h>
 #include "ecewo-export.h"
+#include "ecewo-version.h"
 
 /** Opaque timer handle returned by `ecewo_timeout()` and `ecewo_interval()`. Pass to `ecewo_clear_timer()` to cancel. */
 typedef struct ecewo_timer_s ecewo_timer_t;
@@ -155,6 +156,11 @@ typedef void (*ecewo_timer_cb_t)(void *user_data);
 // ---------------------------------------------------------------------------
 // APP FUNCTIONS
 // ---------------------------------------------------------------------------
+
+/** Return the ecewo version string the library was compiled with (e.g. "4.0.0").
+ *  Reflects the linked library at runtime; compare against the ECEWO_VERSION_*
+ *  macros to detect a header/library mismatch. */
+ECEWO_EXPORT const char *ecewo_version(void);
 
 /** Allocate and initialize a new application instance with default configuration.
  *  Returns `NULL` on allocation failure. The first call lazily initializes the

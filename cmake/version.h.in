@@ -1,0 +1,20 @@
+// Generated from cmake/version.h.in by CMake. Do not edit.
+
+#ifndef ECEWO_VERSION_H
+#define ECEWO_VERSION_H
+
+#define ECEWO_VERSION_MAJOR @PROJECT_VERSION_MAJOR@
+#define ECEWO_VERSION_MINOR @PROJECT_VERSION_MINOR@
+#define ECEWO_VERSION_PATCH @PROJECT_VERSION_PATCH@
+#define ECEWO_VERSION_STRING "@PROJECT_VERSION@"
+
+/* Single integer for compile-time comparisons, e.g.
+ *   #if ECEWO_VERSION >= ECEWO_VERSION_NUM(4, 1, 0)
+ */
+#define ECEWO_VERSION_NUM(major, minor, patch) \
+  ((major) * 10000 + (minor) * 100 + (patch))
+
+#define ECEWO_VERSION \
+  ECEWO_VERSION_NUM(ECEWO_VERSION_MAJOR, ECEWO_VERSION_MINOR, ECEWO_VERSION_PATCH)
+
+#endif /* ECEWO_VERSION_H */

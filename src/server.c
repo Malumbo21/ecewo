@@ -30,6 +30,10 @@
 #include "utils.h"
 #include "logger.h"
 
+const char *ecewo_version(void) {
+  return ECEWO_VERSION_STRING;
+}
+
 struct ecewo_takeover_config_s {
   void *alloc_cb;
   void *read_cb;

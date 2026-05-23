@@ -149,6 +149,12 @@ if(NOT TARGET ecewo::ecewo)
     EXPORT_FILE_NAME "${CMAKE_CURRENT_BINARY_DIR}/include/ecewo-export.h"
   )
 
+  configure_file(
+    "${CMAKE_CURRENT_LIST_DIR}/cmake/version.h.in"
+    "${CMAKE_CURRENT_BINARY_DIR}/include/ecewo-version.h"
+    @ONLY
+  )
+
   add_library(ecewo::ecewo ALIAS ecewo)
   include(${CMAKE_CURRENT_LIST_DIR}/cmake/plugins.cmake)
 
