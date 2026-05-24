@@ -1,6 +1,6 @@
 .PHONY: all test asan-ubsan msan tsan valgrind fuzz format format-file lint lint-fix lint-file help
 
-SOURCES := $(shell find src src/utils include -type f \( -name "*.c" -o -name "*.h" \))
+SOURCES := $(shell find src include -type f \( -name "*.c" -o -name "*.h" \))
 
 test:
 	@mkdir -p build
