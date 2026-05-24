@@ -128,8 +128,8 @@ if(NOT TARGET ecewo::ecewo)
     src/route-register.c
     src/spawn.c
     src/body.c
-    src/arena/arena.c
-    src/arena/arena-pool.c
+    src/arena.c
+    src/arena-pool.c
     vendor/rax.c
   )
 
@@ -185,7 +185,6 @@ if(NOT TARGET ecewo::ecewo)
       $<INSTALL_INTERFACE:include>
     PRIVATE
       ${CMAKE_CURRENT_SOURCE_DIR}/src
-      ${CMAKE_CURRENT_SOURCE_DIR}/src/arena
       ${CMAKE_CURRENT_SOURCE_DIR}/vendor
       ${CMAKE_BINARY_DIR}/_deps/llhttp-src/include
   )
@@ -252,7 +251,6 @@ if(ECEWO_BUILD_FUZZ)
 
     target_include_directories(${fuzz_target} PRIVATE
       ${CMAKE_CURRENT_SOURCE_DIR}/src
-      ${CMAKE_CURRENT_SOURCE_DIR}/src/arena
       ${CMAKE_BINARY_DIR}/_deps/llhttp-src/include
     )
 
