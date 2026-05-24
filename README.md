@@ -13,6 +13,7 @@
 - [Example App](#example-app)
 - [Plugins](#plugins)
 - [Features](#features)
+- [What's Missing?](#whats-missing)
 - [Contributing](#contributing)
 - [License](#license)
 
@@ -212,6 +213,15 @@ Refer to the [docs](/docs/) for usage.
 ### Configuration
 
 Tune per-app: max connections, listen backlog, idle timeout, request timeout, cleanup interval, shutdown drain timeout, listen address. All defaults are sensible; setters apply before `ecewo_bind` / `ecewo_listen`. See [docs/10.configurations.md](docs/10.configurations.md).
+
+---
+
+## What's Missing?
+
+- HTTP/2/3
+- SSE
+- Rate limiter
+- Redis plugin
 
 ---
 
