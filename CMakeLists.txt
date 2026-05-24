@@ -128,8 +128,6 @@ if(NOT TARGET ecewo::ecewo)
     src/route-register.c
     src/spawn.c
     src/body.c
-    src/utils/date-cache.c
-    src/utils/url-decode.c
     src/arena/arena.c
     src/arena/arena-pool.c
     vendor/rax.c
@@ -187,7 +185,6 @@ if(NOT TARGET ecewo::ecewo)
       $<INSTALL_INTERFACE:include>
     PRIVATE
       ${CMAKE_CURRENT_SOURCE_DIR}/src
-      ${CMAKE_CURRENT_SOURCE_DIR}/src/utils
       ${CMAKE_CURRENT_SOURCE_DIR}/src/arena
       ${CMAKE_CURRENT_SOURCE_DIR}/vendor
       ${CMAKE_BINARY_DIR}/_deps/llhttp-src/include

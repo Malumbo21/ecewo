@@ -20,14 +20,16 @@
 // WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 #include <stdlib.h>
+#include <stdbool.h>
 #include <signal.h>
 #include <inttypes.h>
+#include <time.h> // For date cache
+
 #include "server.h"
 #include "route-table.h"
 #include "middleware.h"
 #include "router.h"
 #include "arena-internal.h"
-#include "utils.h"
 #include "logger.h"
 
 const char *ecewo_version(void) {
@@ -73,6 +75,56 @@ static void runtime_register_app(ecewo__runtime_t *rt, ecewo_app_t *app);
 static void runtime_close_handles(ecewo__runtime_t *rt);
 static void server_destroy(ecewo__server_t *srv);
 static void server_shutdown_listener(ecewo__server_t *srv);
+
+// ---------------------------------------------------------------------------
+// DATE CACHE HELPERS
+// ---------------------------------------------------------------------------
+
+typedef struct {
+  time_t timestamp;
+  char date_str[64];
+  uv_mutex_t mutex;
+} date_cache_t;
+
+static date_cache_t date_cache = { 0 };
+static bool date_cache_initialized = false;
+
+static void init_date_cache(void) {
+  if (date_cache_initialized)
+    return;
+
+  uv_mutex_init(&date_cache.mutex);
+  date_cache.timestamp = 0;
+  date_cache_initialized = true;
+}
+
+static void destroy_date_cache(void) {
+  if (!date_cache_initialized)
+    return;
+
+  uv_mutex_destroy(&date_cache.mutex);
+  date_cache_initialized = false;
+}
+
+const char *get_cached_date(void) {
+  time_t now = time(NULL);
+
+  if (date_cache.timestamp == now)
+    return date_cache.date_str;
+
+  uv_mutex_lock(&date_cache.mutex);
+
+  if (date_cache.timestamp != now) {
+    struct tm *gmt = gmtime(&now);
+    strftime(date_cache.date_str, sizeof(date_cache.date_str),
+             "%a, %d %b %Y %H:%M:%S GMT", gmt);
+    date_cache.timestamp = now;
+  }
+
+  uv_mutex_unlock(&date_cache.mutex);
+
+  return date_cache.date_str;
+}
 
 static void client_free_server(ecewo_client_t *client) {
   if (!client)

@@ -24,9 +24,47 @@
 
 #include <stdbool.h>
 
-void init_date_cache(void);
-void destroy_date_cache(void);
-const char *get_cached_date(void);
-void url_decode(char *str, bool plus_as_space);
+static inline int hex_digit(unsigned char c) {
+  if (c >= '0' && c <= '9')
+    return c - '0';
+  if (c >= 'A' && c <= 'F')
+    return c - 'A' + 10;
+  if (c >= 'a' && c <= 'f')
+    return c - 'a' + 10;
+  return -1;
+}
+
+// Decodes percent-encoded characters in-place.
+// plus_as_space=true: '+' -> ' ' (used for query strings, form encoding)
+// plus_as_space=false: '+' is left as-is (used for path params, like decodeURIComponent)
+static inline void url_decode(char *str, bool plus_as_space) {
+  if (!str)
+    return;
+
+  unsigned char *src = (unsigned char *)str;
+  unsigned char *dst = (unsigned char *)str;
+
+  while (*src) {
+    if (*src == '%') {
+      int hi = (src[1] != '\0') ? hex_digit(src[1]) : -1;
+      int lo = (hi >= 0 && src[2] != '\0') ? hex_digit(src[2]) : -1;
+      if (hi >= 0 && lo >= 0) {
+        *dst++ = (unsigned char)((hi << 4) | lo);
+        src += 3;
+      } else {
+        *dst++ = *src++;
+      }
+    } else if (plus_as_space && *src == '+') {
+      *dst++ = ' ';
+      src++;
+    } else {
+      *dst++ = *src++;
+    }
+  }
+
+  *dst = '\0';
+}
+
+const char *get_cached_date(void); // Defined in server.c
 
 #endif
