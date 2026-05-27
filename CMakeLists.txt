@@ -19,6 +19,7 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
 endif()
 
 option(ECEWO_BUILD_SHARED "Build shared library instead of static" OFF)
+option(ECEWO_BUILD_DIST "Build a self-contained distributable shared lib (bundles libuv + llhttp)" OFF)
 option(ECEWO_BUILD_TESTS "Build tests" OFF)
 
 option(ECEWO_ASAN "Enable AddressSanitizer" OFF)
@@ -100,7 +101,15 @@ FetchContent_Declare(
   URL "https://github.com/nodejs/llhttp/archive/refs/tags/release/v9.3.1.tar.gz"
 )
 
-if(ECEWO_BUILD_SHARED)
+if(ECEWO_BUILD_DIST)
+  # Deps are built as PIC static archives and absorbed into libecewo.so.
+  set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+  set(LIBUV_BUILD_SHARED OFF CACHE BOOL "" FORCE)
+  set(LLHTTP_BUILD_SHARED_LIBS OFF CACHE INTERNAL "" FORCE)
+  set(LLHTTP_BUILD_STATIC_LIBS ON CACHE INTERNAL "" FORCE)
+  set(BUILD_SHARED_LIBS OFF CACHE INTERNAL "" FORCE)
+  set(BUILD_STATIC_LIBS ON CACHE INTERNAL "" FORCE)
+elseif(ECEWO_BUILD_SHARED)
   set(LIBUV_BUILD_SHARED ON CACHE BOOL "" FORCE)
   set(LLHTTP_BUILD_SHARED_LIBS ON CACHE INTERNAL "" FORCE)
   set(LLHTTP_BUILD_STATIC_LIBS OFF CACHE INTERNAL "" FORCE)
@@ -133,7 +142,10 @@ if(NOT TARGET ecewo::ecewo)
     vendor/rax.c
   )
 
-  if(ECEWO_BUILD_SHARED)
+  if(ECEWO_BUILD_DIST)
+    add_library(ecewo SHARED ${ECEWO_SOURCES})
+    message(STATUS "Building ecewo as self-contained DIST shared library")
+  elseif(ECEWO_BUILD_SHARED)
     add_library(ecewo SHARED ${ECEWO_SOURCES})
     message(STATUS "Building ecewo as SHARED library")
   else()
@@ -182,14 +194,44 @@ if(NOT TARGET ecewo::ecewo)
       $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
       $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}/include>
       $<BUILD_INTERFACE:${CMAKE_BINARY_DIR}/_deps/libuv-src/include>
-      $<INSTALL_INTERFACE:include>
     PRIVATE
       ${CMAKE_CURRENT_SOURCE_DIR}/src
       ${CMAKE_CURRENT_SOURCE_DIR}/vendor
       ${CMAKE_BINARY_DIR}/_deps/llhttp-src/include
   )
 
-  if(ECEWO_BUILD_SHARED)
+  if(ECEWO_BUILD_DIST)
+    # Force every libuv/llhttp object into libecewo.so (not just the ones
+    # ecewo references) so plugins can resolve the full uv_* surface from it.
+    target_sources(ecewo PRIVATE
+      $<TARGET_OBJECTS:uv_a>
+      $<TARGET_OBJECTS:llhttp_static>
+    )
+    # Pull libuv's system dependencies (pthread/dl/rt/...) without re-adding
+    # its archive objects, which would double-define every uv_* symbol.
+    get_target_property(_uv_sys_libs uv_a INTERFACE_LINK_LIBRARIES)
+    if(_uv_sys_libs)
+      target_link_libraries(ecewo PRIVATE ${_uv_sys_libs})
+    endif()
+
+    # Keep only ecewo_*/ECEWO_*/uv_* in the dynamic symbol table; hide the
+    # absorbed llhttp_* and ecewo internals (rax, ecewo__*, libuv uv__*).
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+      set(_ecewo_export_map "${CMAKE_CURRENT_SOURCE_DIR}/cmake/ecewo.map")
+      target_link_options(ecewo PRIVATE
+        "LINKER:--version-script=${_ecewo_export_map}")
+      set_target_properties(ecewo PROPERTIES LINK_DEPENDS "${_ecewo_export_map}")
+    elseif(APPLE)
+      set(_ecewo_export_list "${CMAKE_CURRENT_SOURCE_DIR}/cmake/ecewo.symbols")
+      target_link_options(ecewo PRIVATE
+        "LINKER:-exported_symbols_list,${_ecewo_export_list}")
+      set_target_properties(ecewo PROPERTIES LINK_DEPENDS "${_ecewo_export_list}")
+    else()
+      message(WARNING
+        "ECEWO_BUILD_DIST: no symbol-export filter for ${CMAKE_SYSTEM_NAME}; "
+        "libuv/llhttp symbols may leak from libecewo.")
+    endif()
+  elseif(ECEWO_BUILD_SHARED)
     target_link_libraries(ecewo PUBLIC uv llhttp_shared)
   else()
     target_link_libraries(ecewo PUBLIC uv_a llhttp_static)

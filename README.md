@@ -208,7 +208,7 @@ Refer to the [docs](/docs/) for usage.
 - Client reference counting (`ecewo_client_ref` / `ecewo_client_unref`) for holding a client across async boundaries.
 - Direct libuv loop access (`ecewo_get_loop`) for advanced integrations.
 - Connection takeover API (`ecewo_connection_takeover`); for WebSocket and other protocols that need raw TCP after the HTTP upgrade.
-- C++-safe header (wrapped in `extern "C"`); written with FFI bindings in mind. See [docs/16.ffi-bindings.md](docs/16.ffi-bindings.md).
+- C++ safe header (wrapped in `extern "C"`); written with FFI bindings in mind. See [docs/17.ffi-bindings.md](docs/17.ffi-bindings.md).
 
 ### Configuration
 
