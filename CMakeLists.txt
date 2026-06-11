@@ -98,7 +98,7 @@ FetchContent_Declare(
 
 FetchContent_Declare(
   llhttp
-  URL "https://github.com/nodejs/llhttp/archive/refs/tags/release/v9.3.1.tar.gz"
+  URL "https://github.com/nodejs/llhttp/archive/refs/tags/release/v9.4.1.tar.gz"
 )
 
 if(ECEWO_BUILD_DIST)
