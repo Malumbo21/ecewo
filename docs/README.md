@@ -7,6 +7,7 @@
 2. [Defining Routes](02.defining-routes.md)
     1. [Dynamic Parameters](02.defining-routes.md#dynamic-parameters)
     2. [Wildcard Routes](02.defining-routes.md#wildcard-routes)
+    3. [Builder Pattern](02.defining-routes.md#builder-pattern)
 3. [Request Handling](03.request-handling.md)
     1. [Handlers](03.request-handling.md#handlers)
     2. [Request Body](03.request-handling.md#request-body)

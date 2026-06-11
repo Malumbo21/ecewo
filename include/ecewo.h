@@ -415,7 +415,8 @@ ECEWO_EXPORT void ecewo_route_middleware(ecewo_route_t *route, ecewo_middleware_
  *  After this call the builder must not be used again. */
 ECEWO_EXPORT void ecewo_route_handler(ecewo_route_t *route, ecewo_handler_t handler);
 
-// Internal helper used by the macros below. Do not call directly.
+// Helper used by the macros below.
+// Reach for this only when you already have a flat function-pointer array and want to skip the builder steps.
 // fns = [middleware0, ..., middlewareN, handler], count = total elements.
 ECEWO_EXPORT void ecewo_route_register(ecewo_app_t *app, ecewo_method_t method, const char *path, void **fns, int count);
 
