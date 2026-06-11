@@ -37,7 +37,7 @@ int test_sb_null_only(void) {
   ASSERT_NOT_NULL(a);
   string_builder_t sb = {0};
 
-  ecewo_sb_append_null(a, &sb);
+  ECEWO_SB_APPEND_NULL(a, &sb);
 
   ASSERT_EQ(1, (int64_t)sb.count);
   ASSERT_EQ('\0', sb.items[0]);
@@ -53,8 +53,8 @@ int test_sb_single_append(void) {
   ASSERT_NOT_NULL(a);
   string_builder_t sb = {0};
 
-  ecewo_sb_append_cstr(a, &sb, "hello");
-  ecewo_sb_append_null(a, &sb);
+  ECEWO_SB_APPEND_CSTR(a, &sb, "hello");
+  ECEWO_SB_APPEND_NULL(a, &sb);
 
   ASSERT_EQ(6, (int64_t)sb.count);  // 5 chars + NUL
   ASSERT_EQ_STR("hello", sb.items);
@@ -64,14 +64,14 @@ int test_sb_single_append(void) {
 }
 
 
-// Single char appended via ecewo_da_append
+// Single char appended via ECEWO_DA_APPEND
 int test_sb_single_char(void) {
   ecewo_arena_t *a = ecewo_arena_borrow();
   ASSERT_NOT_NULL(a);
   string_builder_t sb = {0};
 
-  ecewo_da_append(a, &sb, 'X');
-  ecewo_sb_append_null(a, &sb);
+  ECEWO_DA_APPEND(a, &sb, 'X');
+  ECEWO_SB_APPEND_NULL(a, &sb);
 
   ASSERT_EQ(2, (int64_t)sb.count);
   ASSERT_EQ('X', sb.items[0]);
@@ -90,10 +90,10 @@ int test_sb_path_join(void) {
 
   const char *parts[] = {"api", "v1", "users"};
   for (int i = 0; i < 3; i++) {
-    if (i > 0) ecewo_da_append(a, &sb, '/');
-    ecewo_sb_append_cstr(a, &sb, parts[i]);
+    if (i > 0) ECEWO_DA_APPEND(a, &sb, '/');
+    ECEWO_SB_APPEND_CSTR(a, &sb, parts[i]);
   }
-  ecewo_sb_append_null(a, &sb);
+  ECEWO_SB_APPEND_NULL(a, &sb);
 
   ASSERT_EQ_STR("api/v1/users", sb.items);
 
@@ -111,10 +111,10 @@ int test_sb_large_growth(void) {
   // Each iteration appends "ab" (2 bytes). 200 iterations = 400 chars,
   // which exceeds ARENA_DA_INIT_CAP=256 and forces at least one realloc.
   for (int i = 0; i < 200; i++) {
-    ecewo_sb_append_cstr(a, &sb, "ab");
+    ECEWO_SB_APPEND_CSTR(a, &sb, "ab");
   }
 
-  ecewo_sb_append_null(a, &sb);
+  ECEWO_SB_APPEND_NULL(a, &sb);
 
   ASSERT_EQ(401, (int64_t)sb.count);  // 400 chars + NULL
   ASSERT_TRUE(sb.capacity >= 400);
@@ -137,8 +137,8 @@ int test_sb_reuse_after_free(void) {
   ASSERT_NOT_NULL(a);
   string_builder_t sb = {0};
 
-  ecewo_sb_append_cstr(a, &sb, "first");
-  ecewo_sb_append_null(a, &sb);
+  ECEWO_SB_APPEND_CSTR(a, &sb, "first");
+  ECEWO_SB_APPEND_NULL(a, &sb);
   ASSERT_EQ_STR("first", sb.items);
 
   ecewo_arena_return(a);
@@ -147,8 +147,8 @@ int test_sb_reuse_after_free(void) {
   a = ecewo_arena_borrow();
   ASSERT_NOT_NULL(a);
   sb = (string_builder_t){0};
-  ecewo_sb_append_cstr(a, &sb, "second");
-  ecewo_sb_append_null(a, &sb);
+  ECEWO_SB_APPEND_CSTR(a, &sb, "second");
+  ECEWO_SB_APPEND_NULL(a, &sb);
   ASSERT_EQ_STR("second", sb.items);
 
   ecewo_arena_return(a);

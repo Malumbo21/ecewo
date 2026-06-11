@@ -230,7 +230,7 @@ int test_arena_free(void) {
 }
 
 
-// TEST 13: ecewo_da_append: capacity doubles on overflow (forces realloc past ARENA_DA_INIT_CAP=256)
+// TEST 13: ECEWO_DA_APPEND: capacity doubles on overflow (forces realloc past ARENA_DA_INIT_CAP=256)
 typedef struct {
   int *items;
   size_t count;
@@ -244,7 +244,7 @@ int test_arena_da_append_growth(void) {
 
   // Fill past initial capacity (ARENA_DA_INIT_CAP = 256) to force a realloc
   for (int i = 0; i < 300; i++) {
-    ecewo_da_append(a, &arr, i);
+    ECEWO_DA_APPEND(a, &arr, i);
   }
 
   ASSERT_EQ(300, (int64_t)arr.count);
@@ -259,14 +259,14 @@ int test_arena_da_append_growth(void) {
 }
 
 
-// TEST 14: ecewo_da_append_many: bulk append
+// TEST 14: ECEWO_DA_APPEND_MANY: bulk append
 int test_arena_da_append_many(void) {
   ecewo_arena_t *a = ecewo_arena_borrow();
   ASSERT_NOT_NULL(a);
   IntArray arr = {0};
 
   int batch[] = {10, 20, 30, 40, 50};
-  ecewo_da_append_many(a, &arr, batch, 5);
+  ECEWO_DA_APPEND_MANY(a, &arr, batch, 5);
 
   ASSERT_EQ(5, (int64_t)arr.count);
   for (int i = 0; i < 5; i++) {
@@ -275,7 +275,7 @@ int test_arena_da_append_many(void) {
 
   // Append a second batch
   int batch2[] = {60, 70};
-  ecewo_da_append_many(a, &arr, batch2, 2);
+  ECEWO_DA_APPEND_MANY(a, &arr, batch2, 2);
   ASSERT_EQ(7, (int64_t)arr.count);
   ASSERT_EQ(60, arr.items[5]);
   ASSERT_EQ(70, arr.items[6]);

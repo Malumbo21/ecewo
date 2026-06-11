@@ -673,7 +673,7 @@ ECEWO_EXPORT int ecewo_active_connections(ecewo_app_t *app);
 #define ECEWO__CAST_PTR(...)
 #endif
 
-#define ecewo_da_append(a, da, item)                                                       \
+#define ECEWO_DA_APPEND(a, da, item)                                                       \
   do {                                                                                     \
     if ((da)->count >= (da)->capacity) {                                                   \
       size_t new_capacity = (da)->capacity == 0 ? ECEWO__DA_INIT_CAP : (da)->capacity * 2; \
@@ -687,7 +687,7 @@ ECEWO_EXPORT int ecewo_active_connections(ecewo_app_t *app);
     (da)->items[(da)->count++] = (item);                                                   \
   } while (0)
 
-#define ecewo_da_append_many(a, da, new_items, new_items_count)                               \
+#define ECEWO_DA_APPEND_MANY(a, da, new_items, new_items_count)                               \
   do {                                                                                        \
     if ((da)->count + (new_items_count) > (da)->capacity) {                                   \
       size_t new_capacity = (da)->capacity;                                                   \
@@ -705,14 +705,14 @@ ECEWO_EXPORT int ecewo_active_connections(ecewo_app_t *app);
     (da)->count += (new_items_count);                                                         \
   } while (0)
 
-#define ecewo_sb_append_cstr(a, sb, cstr) \
+#define ECEWO_SB_APPEND_CSTR(a, sb, cstr) \
   do {                                    \
     const char *s = (cstr);               \
     size_t n = strlen(s);                 \
-    ecewo_da_append_many(a, sb, s, n);    \
+    ECEWO_DA_APPEND_MANY(a, sb, s, n);    \
   } while (0)
 
-#define ecewo_sb_append_null(a, sb) ecewo_da_append(a, sb, 0)
+#define ECEWO_SB_APPEND_NULL(a, sb) ECEWO_DA_APPEND(a, sb, 0)
 
 #ifdef __cplusplus
 }
