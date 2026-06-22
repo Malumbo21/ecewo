@@ -394,7 +394,8 @@ typedef enum {
   ECEWO_METHOD_POST,
   ECEWO_METHOD_PUT,
   ECEWO_METHOD_OPTIONS,
-  ECEWO_METHOD_PATCH
+  ECEWO_METHOD_PATCH,
+  ECEWO_METHOD_QUERY,
 } ecewo_method_t;
 
 // ---------------------------------------------------------------------------
@@ -480,6 +481,13 @@ ECEWO_EXPORT void ecewo_route_register(ecewo_app_t *app, ecewo_method_t method, 
   do {                                                                                        \
     void *fns[] = { __VA_ARGS__ };                                                            \
     ecewo_route_register(app, ECEWO_METHOD_OPTIONS, path, fns, sizeof(fns) / sizeof(void *)); \
+  } while (0)
+
+/** Register a QUERY route. See ECEWO_GET for full documentation. */
+#define ECEWO_QUERY(app, path, ...)                                                         \
+  do {                                                                                      \
+    void *fns[] = { __VA_ARGS__ };                                                          \
+    ecewo_route_register(app, ECEWO_METHOD_QUERY, path, fns, sizeof(fns) / sizeof(void *)); \
   } while (0)
 
 // ---------------------------------------------------------------------------

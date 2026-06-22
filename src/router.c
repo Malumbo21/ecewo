@@ -191,12 +191,12 @@ static int dispatch(ecewo__server_t *srv,
 
     uint8_t allowed = route_table_allowed_methods(srv->route_table, &tok);
     if (allowed) {
-      static const char *method_names[7] = {
-        "DELETE", "GET", "HEAD", "POST", "PUT", "OPTIONS", "PATCH"
+      static const char *method_names[8] = {
+        "DELETE", "GET", "HEAD", "POST", "PUT", "OPTIONS", "PATCH", "QUERY"
       };
       char allow_buf[64];
       size_t pos = 0;
-      for (int i = 0; i < 7; i++) {
+      for (int i = 0; i < 8; i++) {
         if (allowed & (uint8_t)(1u << i)) {
           if (pos > 0) {
             allow_buf[pos++] = ',';

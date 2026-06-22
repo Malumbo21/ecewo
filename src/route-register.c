@@ -40,6 +40,8 @@ static llhttp_method_t to_llhttp_method(ecewo_method_t method) {
     return HTTP_OPTIONS;
   case ECEWO_METHOD_PATCH:
     return HTTP_PATCH;
+  case ECEWO_METHOD_QUERY:
+    return HTTP_QUERY;
   default:
     return HTTP_GET;
   }

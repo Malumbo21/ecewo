@@ -27,7 +27,7 @@
 #include "rax.h"
 
 #define MAX_PATH_SEGMENTS 128
-#define METHOD_COUNT 7
+#define METHOD_COUNT 8
 
 typedef enum {
   METHOD_INDEX_DELETE,
@@ -36,7 +36,8 @@ typedef enum {
   METHOD_INDEX_POST,
   METHOD_INDEX_PUT,
   METHOD_INDEX_OPTIONS,
-  METHOD_INDEX_PATCH
+  METHOD_INDEX_PATCH,
+  METHOD_INDEX_QUERY
 } http_method_index_t;
 
 static int method_to_index(llhttp_method_t method) {
@@ -55,6 +56,8 @@ static int method_to_index(llhttp_method_t method) {
     return METHOD_INDEX_OPTIONS;
   case HTTP_PATCH:
     return METHOD_INDEX_PATCH;
+  case HTTP_QUERY:
+    return METHOD_INDEX_QUERY;
   default:
     return -1;
   }

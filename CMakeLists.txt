@@ -304,7 +304,7 @@ if(ECEWO_BUILD_TESTS)
   include(CTest)
   enable_testing()
   
-  ecewo_add(mock@dev)
+  ecewo_add(mock@v0.3.0)
   
   function(ecewo_test test_name)
     set(target_name ecewo-test-${test_name})

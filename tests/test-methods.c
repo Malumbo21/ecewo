@@ -111,12 +111,29 @@ int test_method_patch(void) {
   RETURN_OK();
 }
 
+int test_method_query(void) {
+  MockParams params = {
+    .method = MOCK_QUERY,
+    .path = "/method",
+    .body = "{\"test\":true}"
+  };
+
+  MockResponse res = request(&params);
+
+  ASSERT_EQ(200, res.status_code);
+  ASSERT_EQ_STR("len=13, body={\"test\":true}, method=QUERY", res.body);
+
+  free_request(&res);
+  RETURN_OK();
+}
+
 static void setup_routes(ecewo_app_t *app) {
   ECEWO_GET(app, "/method", handler_body);
   ECEWO_POST(app, "/method", handler_body);
   ECEWO_PUT(app, "/method", handler_body);
   ECEWO_DELETE(app, "/method", handler_body);
   ECEWO_PATCH(app, "/method", handler_body);
+  ECEWO_QUERY(app, "/method", handler_body);
 }
 
 int main(void) {
@@ -126,6 +143,7 @@ int main(void) {
   RUN_TEST(test_method_put);
   RUN_TEST(test_method_delete);
   RUN_TEST(test_method_patch);
+  RUN_TEST(test_method_query);
   mock_cleanup();
   return 0;
 }
