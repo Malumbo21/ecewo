@@ -21,6 +21,7 @@
 
 #include "router.h"
 #include "route-table.h"
+#include "http-methods.h"
 #include "middleware.h"
 #include "utils.h"
 #include "request.h"
@@ -191,12 +192,16 @@ static int dispatch(ecewo__server_t *srv,
 
     uint8_t allowed = route_table_allowed_methods(srv->route_table, &tok);
     if (allowed) {
-      static const char *method_names[8] = {
-        "DELETE", "GET", "HEAD", "POST", "PUT", "OPTIONS", "PATCH", "QUERY"
+      // Generated from ECEWO_METHOD_TABLE; index i matches the method bit set
+      // by route_table_allowed_methods (METHOD_INDEX_*).
+      static const char *method_names[] = {
+#define X(suffix, http_method, name) name,
+        ECEWO_METHOD_TABLE(X)
+#undef X
       };
       char allow_buf[64];
       size_t pos = 0;
-      for (int i = 0; i < 8; i++) {
+      for (int i = 0; i < (int)(sizeof(method_names) / sizeof(method_names[0])); i++) {
         if (allowed & (uint8_t)(1u << i)) {
           if (pos > 0) {
             allow_buf[pos++] = ',';

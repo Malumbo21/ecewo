@@ -21,27 +21,17 @@
 
 #include "server.h"
 #include "route-table.h"
+#include "http-methods.h"
 #include "middleware.h"
 #include "logger.h"
 
 static llhttp_method_t to_llhttp_method(ecewo_method_t method) {
   switch (method) {
-  case ECEWO_METHOD_DELETE:
-    return HTTP_DELETE;
-  case ECEWO_METHOD_GET:
-    return HTTP_GET;
-  case ECEWO_METHOD_HEAD:
-    return HTTP_HEAD;
-  case ECEWO_METHOD_POST:
-    return HTTP_POST;
-  case ECEWO_METHOD_PUT:
-    return HTTP_PUT;
-  case ECEWO_METHOD_OPTIONS:
-    return HTTP_OPTIONS;
-  case ECEWO_METHOD_PATCH:
-    return HTTP_PATCH;
-  case ECEWO_METHOD_QUERY:
-    return HTTP_QUERY;
+#define X(suffix, http_method, name) \
+  case ECEWO_METHOD_##suffix: \
+    return http_method;
+    ECEWO_METHOD_TABLE(X)
+#undef X
   default:
     return HTTP_GET;
   }

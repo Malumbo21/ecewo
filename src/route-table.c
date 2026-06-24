@@ -22,42 +22,41 @@
 #include <stdlib.h>
 #include <inttypes.h>
 #include "route-table.h"
+#include "http-methods.h"
 #include "middleware.h"
 #include "logger.h"
 #include "rax.h"
 
 #define MAX_PATH_SEGMENTS 128
-#define METHOD_COUNT 8
 
+// Per-method table index, generated from ECEWO_METHOD_TABLE (http-methods.h).
+// METHOD_COUNT is the trailing enumerator, so it always equals the number of
+// methods without a hand-maintained count.
 typedef enum {
-  METHOD_INDEX_DELETE,
-  METHOD_INDEX_GET,
-  METHOD_INDEX_HEAD,
-  METHOD_INDEX_POST,
-  METHOD_INDEX_PUT,
-  METHOD_INDEX_OPTIONS,
-  METHOD_INDEX_PATCH,
-  METHOD_INDEX_QUERY
+#define X(suffix, http_method, name) METHOD_INDEX_##suffix,
+  ECEWO_METHOD_TABLE(X)
+#undef X
+      METHOD_COUNT
 } http_method_index_t;
+
+// The METHOD_INDEX_* values index into per-method arrays and are also used as
+// bit positions in the Allow-header bitmask, so they MUST stay in lockstep with
+// the public ecewo_method_t enum (include/ecewo.h). These fail to compile if the
+// two ever drift.
+#define X(suffix, http_method, name)                                           \
+  _Static_assert((int)METHOD_INDEX_##suffix == (int)ECEWO_METHOD_##suffix,     \
+                 "METHOD_INDEX_" #suffix                                        \
+                 " out of sync with ECEWO_METHOD_" #suffix);
+ECEWO_METHOD_TABLE(X)
+#undef X
 
 static int method_to_index(llhttp_method_t method) {
   switch (method) {
-  case HTTP_DELETE:
-    return METHOD_INDEX_DELETE;
-  case HTTP_GET:
-    return METHOD_INDEX_GET;
-  case HTTP_HEAD:
-    return METHOD_INDEX_HEAD;
-  case HTTP_POST:
-    return METHOD_INDEX_POST;
-  case HTTP_PUT:
-    return METHOD_INDEX_PUT;
-  case HTTP_OPTIONS:
-    return METHOD_INDEX_OPTIONS;
-  case HTTP_PATCH:
-    return METHOD_INDEX_PATCH;
-  case HTTP_QUERY:
-    return METHOD_INDEX_QUERY;
+#define X(suffix, http_method, name)                                           \
+  case http_method:                                                            \
+    return METHOD_INDEX_##suffix;
+    ECEWO_METHOD_TABLE(X)
+#undef X
   default:
     return -1;
   }
