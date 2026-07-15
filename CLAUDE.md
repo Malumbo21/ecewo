@@ -32,7 +32,7 @@ ctest --test-dir build -R body-streaming --output-on-failure   # by name (regex)
 2. Register it in `CMakeLists.txt` with `ecewo_test(<name>)`.
 3. Reconfigure: `cmake -B build -DECEWO_BUILD_TESTS=ON`.
 
-Tests link `ecewo::mock` (the `ecewo-mock` plugin, pulled via `ecewo_add(mock@dev)`), which spins up a **real** server on `TEST_PORT` (8888). `MockParams`/`request()` cover most cases; tests that need precise TCP framing (split reads, chunked, oversized bodies) open raw sockets to `TEST_PORT` directly — see `tests/test-body-streaming-split.c`.
+Tests link `ecewo::mock` (the `ecewo-mock` plugin, pulled via `ecewo_add(mock@v0.3.0)`), which spins up a **real** server on `TEST_PORT` (8888). `MockParams`/`request()` cover most cases; tests that need precise TCP framing (split reads, chunked, oversized bodies) open raw sockets to `TEST_PORT` directly — see `tests/test-body-streaming-split.c`.
 
 The library builds with `-Werror` (unused function/variable) and tests with `-Wall -Wextra -Werror`, so warnings break the build.
 
@@ -74,6 +74,6 @@ Plugins are separate repos fetched at configure time. `cmake/registry.cmake` dec
 ## Conventions
 
 - Public symbols: `ecewo_*`. Internal symbols shared across translation units: `ecewo__*` (double underscore). File-local: plain statics.
-- The public header is C++-safe (`extern "C"`) and written for FFI bindings — keep public types opaque. See `docs/16.ffi-bindings.md`.
+- The public header is C++-safe (`extern "C"`) and written for FFI bindings — keep public types opaque. See `docs/17.ffi-bindings.md`.
 - `ecewo_header_set` silently rejects reserved framing/hop-by-hop headers (`Content-Length`, `Transfer-Encoding`, `Connection`, `Host`, `Date`).
-- Detailed usage docs live in `docs/` (numbered `01`–`17`), with `17.api-reference.md` as the API reference.
+- Detailed usage docs live in `docs/` (numbered `01`–`20`), with `16.api-reference.md` as the API reference.
