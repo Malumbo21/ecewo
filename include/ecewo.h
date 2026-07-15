@@ -421,6 +421,14 @@ ECEWO_EXPORT void ecewo_route_handler(ecewo_route_t *route, ecewo_handler_t hand
 // fns = [middleware0, ..., middlewareN, handler], count = total elements.
 ECEWO_EXPORT void ecewo_route_register(ecewo_app_t *app, ecewo_method_t method, const char *path, void **fns, int count);
 
+// Implementation detail of the ECEWO_<METHOD> macros below; use those instead.
+#define ECEWO__ROUTE(app, method, path, ...)                   \
+  do {                                                         \
+    void *ecewo__fns[] = { __VA_ARGS__ };                      \
+    ecewo_route_register(app, method, path, ecewo__fns,        \
+                         sizeof(ecewo__fns) / sizeof(void *)); \
+  } while (0)
+
 /**
  * Register a route handler for the given HTTP method and path.
  *
@@ -435,60 +443,28 @@ ECEWO_EXPORT void ecewo_route_register(ecewo_app_t *app, ecewo_method_t method, 
  *
  * Routes are matched in registration order; the first match wins.
  */
-#define ECEWO_GET(app, path, ...)                                                         \
-  do {                                                                                    \
-    void *fns[] = { __VA_ARGS__ };                                                        \
-    ecewo_route_register(app, ECEWO_METHOD_GET, path, fns, sizeof(fns) / sizeof(void *)); \
-  } while (0)
+#define ECEWO_GET(app, path, ...) ECEWO__ROUTE(app, ECEWO_METHOD_GET, path, __VA_ARGS__)
 
 /** Register a POST route. See ECEWO_GET for full documentation. */
-#define ECEWO_POST(app, path, ...)                                                         \
-  do {                                                                                     \
-    void *fns[] = { __VA_ARGS__ };                                                         \
-    ecewo_route_register(app, ECEWO_METHOD_POST, path, fns, sizeof(fns) / sizeof(void *)); \
-  } while (0)
+#define ECEWO_POST(app, path, ...) ECEWO__ROUTE(app, ECEWO_METHOD_POST, path, __VA_ARGS__)
 
 /** Register a PUT route. See ECEWO_GET for full documentation. */
-#define ECEWO_PUT(app, path, ...)                                                         \
-  do {                                                                                    \
-    void *fns[] = { __VA_ARGS__ };                                                        \
-    ecewo_route_register(app, ECEWO_METHOD_PUT, path, fns, sizeof(fns) / sizeof(void *)); \
-  } while (0)
+#define ECEWO_PUT(app, path, ...) ECEWO__ROUTE(app, ECEWO_METHOD_PUT, path, __VA_ARGS__)
 
 /** Register a PATCH route. See ECEWO_GET for full documentation. */
-#define ECEWO_PATCH(app, path, ...)                                                         \
-  do {                                                                                      \
-    void *fns[] = { __VA_ARGS__ };                                                          \
-    ecewo_route_register(app, ECEWO_METHOD_PATCH, path, fns, sizeof(fns) / sizeof(void *)); \
-  } while (0)
+#define ECEWO_PATCH(app, path, ...) ECEWO__ROUTE(app, ECEWO_METHOD_PATCH, path, __VA_ARGS__)
 
 /** Register a DELETE route. See ECEWO_GET for full documentation. */
-#define ECEWO_DELETE(app, path, ...)                                                         \
-  do {                                                                                       \
-    void *fns[] = { __VA_ARGS__ };                                                           \
-    ecewo_route_register(app, ECEWO_METHOD_DELETE, path, fns, sizeof(fns) / sizeof(void *)); \
-  } while (0)
+#define ECEWO_DELETE(app, path, ...) ECEWO__ROUTE(app, ECEWO_METHOD_DELETE, path, __VA_ARGS__)
 
 /** Register a HEAD route. ecewo automatically suppresses the body in the response. See ECEWO_GET. */
-#define ECEWO_HEAD(app, path, ...)                                                         \
-  do {                                                                                     \
-    void *fns[] = { __VA_ARGS__ };                                                         \
-    ecewo_route_register(app, ECEWO_METHOD_HEAD, path, fns, sizeof(fns) / sizeof(void *)); \
-  } while (0)
+#define ECEWO_HEAD(app, path, ...) ECEWO__ROUTE(app, ECEWO_METHOD_HEAD, path, __VA_ARGS__)
 
 /** Register an OPTIONS route. See ECEWO_GET for full documentation. */
-#define ECEWO_OPTIONS(app, path, ...)                                                         \
-  do {                                                                                        \
-    void *fns[] = { __VA_ARGS__ };                                                            \
-    ecewo_route_register(app, ECEWO_METHOD_OPTIONS, path, fns, sizeof(fns) / sizeof(void *)); \
-  } while (0)
+#define ECEWO_OPTIONS(app, path, ...) ECEWO__ROUTE(app, ECEWO_METHOD_OPTIONS, path, __VA_ARGS__)
 
 /** Register a QUERY route. See ECEWO_GET for full documentation. */
-#define ECEWO_QUERY(app, path, ...)                                                         \
-  do {                                                                                      \
-    void *fns[] = { __VA_ARGS__ };                                                          \
-    ecewo_route_register(app, ECEWO_METHOD_QUERY, path, fns, sizeof(fns) / sizeof(void *)); \
-  } while (0)
+#define ECEWO_QUERY(app, path, ...) ECEWO__ROUTE(app, ECEWO_METHOD_QUERY, path, __VA_ARGS__)
 
 // ---------------------------------------------------------------------------
 // PER-REQUEST CONTEXT

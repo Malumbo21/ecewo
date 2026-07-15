@@ -147,7 +147,7 @@ Refer to the [docs](/docs/) for usage.
 
 ### Routing
 
-- Methods: `GET`, `POST`, `PUT`, `PATCH`, `DELETE`, `HEAD`, `OPTIONS`.
+- Methods: `GET`, `POST`, `PUT`, `PATCH`, `DELETE`, `HEAD`, `OPTIONS`, `QUERY`.
 - Dynamic path parameters (`/users/:id`) and wildcard routes (`*`).
 - O(1) average-case route lookup via a radix tree.
 - Two registration styles:

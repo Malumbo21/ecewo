@@ -73,7 +73,7 @@ uint8_t route_table_allowed_methods(route_table_t *table,
 
 int route_table_add(route_table_t *table,
                     ecewo_arena_t *arena,
-                    llhttp_method_t method,
+                    ecewo_method_t method,
                     const char *path,
                     ecewo_handler_t handler,
                     void *middleware_ctx);

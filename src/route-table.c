@@ -29,32 +29,20 @@
 
 #define MAX_PATH_SEGMENTS 128
 
-// Per-method table index, generated from ECEWO_METHOD_TABLE (http-methods.h).
-// METHOD_COUNT is the trailing enumerator, so it always equals the number of
-// methods without a hand-maintained count.
-typedef enum {
-#define X(suffix, http_method, name) METHOD_INDEX_##suffix,
-  ECEWO_METHOD_TABLE(X)
-#undef X
-      METHOD_COUNT
-} http_method_index_t;
+// The Allow-header bitmask (collect_methods / route_table_allowed_methods) is
+// a uint8_t, so every routable method needs its own bit. Widen the mask type
+// here, in route-table.h, and in router.c before adding a 9th method to
+// ECEWO_METHOD_TABLE.
+_Static_assert(ECEWO__METHOD_COUNT <= 8,
+               "Allow-header bitmask is uint8_t; widen it before adding more methods");
 
-// The METHOD_INDEX_* values index into per-method arrays and are also used as
-// bit positions in the Allow-header bitmask, so they MUST stay in lockstep with
-// the public ecewo_method_t enum (include/ecewo.h). These fail to compile if the
-// two ever drift.
-#define X(suffix, http_method, name)                                           \
-  _Static_assert((int)METHOD_INDEX_##suffix == (int)ECEWO_METHOD_##suffix,     \
-                 "METHOD_INDEX_" #suffix                                        \
-                 " out of sync with ECEWO_METHOD_" #suffix);
-ECEWO_METHOD_TABLE(X)
-#undef X
-
+// Maps the wire method llhttp parsed to a per-method array index
+// (the ecewo_method_t value), or -1 for methods ecewo does not route.
 static int method_to_index(llhttp_method_t method) {
   switch (method) {
-#define X(suffix, http_method, name)                                           \
-  case http_method:                                                            \
-    return METHOD_INDEX_##suffix;
+#define X(suffix, http_method) \
+  case http_method:            \
+    return ECEWO_METHOD_##suffix;
     ECEWO_METHOD_TABLE(X)
 #undef X
   default:
@@ -98,15 +86,15 @@ typedef struct route_node {
   rax *children;
   struct route_node *param_child;
 
-  ecewo_handler_t handlers[METHOD_COUNT];
-  void *middleware_ctx[METHOD_COUNT];
-  char **route_param_names[METHOD_COUNT];
-  uint8_t route_param_count[METHOD_COUNT];
+  ecewo_handler_t handlers[ECEWO__METHOD_COUNT];
+  void *middleware_ctx[ECEWO__METHOD_COUNT];
+  char **route_param_names[ECEWO__METHOD_COUNT];
+  uint8_t route_param_count[ECEWO__METHOD_COUNT];
 
-  ecewo_handler_t wildcard_handlers[METHOD_COUNT];
-  void *wildcard_middleware_ctx[METHOD_COUNT];
-  char **wildcard_param_names[METHOD_COUNT];
-  uint8_t wildcard_param_count[METHOD_COUNT];
+  ecewo_handler_t wildcard_handlers[ECEWO__METHOD_COUNT];
+  void *wildcard_middleware_ctx[ECEWO__METHOD_COUNT];
+  char **wildcard_param_names[ECEWO__METHOD_COUNT];
+  uint8_t wildcard_param_count[ECEWO__METHOD_COUNT];
 } route_node_t;
 
 struct route_table_s {
@@ -429,7 +417,7 @@ static uint8_t collect_methods(route_node_t *node,
   uint8_t mask = 0;
 
   if (seg_idx == path->count) {
-    for (int i = 0; i < METHOD_COUNT; i++) {
+    for (int i = 0; i < ECEWO__METHOD_COUNT; i++) {
       if (node->handlers[i])
         mask |= (uint8_t)(1u << i);
       // Wildcard matches zero remaining segments too
@@ -442,7 +430,7 @@ static uint8_t collect_methods(route_node_t *node,
   const path_segment_t *seg = &path->segments[seg_idx];
 
   // Wildcard at this node matches all remaining segments
-  for (int i = 0; i < METHOD_COUNT; i++) {
+  for (int i = 0; i < ECEWO__METHOD_COUNT; i++) {
     if (node->wildcard_handlers[i])
       mask |= (uint8_t)(1u << i);
   }
@@ -485,16 +473,18 @@ route_table_t *route_table_create(ecewo_arena_t *arena) {
 
 int route_table_add(route_table_t *table,
                     ecewo_arena_t *arena,
-                    llhttp_method_t method,
+                    ecewo_method_t method,
                     const char *path,
                     ecewo_handler_t handler,
                     void *middleware_ctx) {
   if (!table || !path || !handler)
     return -1;
 
-  int method_idx = method_to_index(method);
-  if (method_idx < 0) {
-    LOG_DEBUG("Unsupported HTTP method: %d", method);
+  // ecewo_method_t values are the table indices (asserted in http-methods.h),
+  // but the value may arrive as an unchecked int through FFI.
+  int method_idx = (int)method;
+  if (method_idx < 0 || method_idx >= ECEWO__METHOD_COUNT) {
+    LOG_DEBUG("Unsupported HTTP method: %d", method_idx);
     return -1;
   }
 

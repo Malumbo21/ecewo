@@ -47,6 +47,7 @@
 #include "ecewo.h"
 #include "arena-internal.h"
 #include "route-table.h"
+#include "http-methods.h"
 #include "llhttp.h"
 
 static void noop(ecewo_request_t *req, ecewo_response_t *res) {
@@ -55,44 +56,44 @@ static void noop(ecewo_request_t *req, ecewo_response_t *res) {
 }
 
 static route_table_t *route_table;
+// Backs the persistent table; lives for the whole fuzzing run.
+static ecewo_arena_t table_arena;
 
-static const uint8_t method_map[7] = {
-  HTTP_DELETE,
-  HTTP_GET,
-  HTTP_HEAD,
-  HTTP_POST,
-  HTTP_PUT,
-  HTTP_OPTIONS,
-  HTTP_PATCH,
+// Wire methods for route_table_match, generated from ECEWO_METHOD_TABLE so
+// every routable method (and its Allow-bitmask bit) gets fuzzed.
+static const uint8_t method_map[ECEWO__METHOD_COUNT] = {
+#define X(suffix, http_method) http_method,
+  ECEWO_METHOD_TABLE(X)
+#undef X
 };
 
 int LLVMFuzzerInitialize(int *argc, char ***argv) {
   (void)argc;
   (void)argv;
 
-  route_table = route_table_create(NULL);
+  route_table = route_table_create(&table_arena);
   if (!route_table)
     return 0;
 
   // Static routes
-  route_table_add(route_table, NULL, HTTP_GET, "/", noop, NULL);
-  route_table_add(route_table, NULL, HTTP_GET, "/users", noop, NULL);
-  route_table_add(route_table, NULL, HTTP_GET, "/users/admin", noop, NULL);
-  route_table_add(route_table, NULL, HTTP_POST, "/users", noop, NULL);
-  route_table_add(route_table, NULL, HTTP_GET, "/api/v1/status", noop, NULL);
+  route_table_add(route_table, &table_arena, ECEWO_METHOD_GET, "/", noop, NULL);
+  route_table_add(route_table, &table_arena, ECEWO_METHOD_GET, "/users", noop, NULL);
+  route_table_add(route_table, &table_arena, ECEWO_METHOD_GET, "/users/admin", noop, NULL);
+  route_table_add(route_table, &table_arena, ECEWO_METHOD_POST, "/users", noop, NULL);
+  route_table_add(route_table, &table_arena, ECEWO_METHOD_GET, "/api/v1/status", noop, NULL);
 
   // Dynamic routes
-  route_table_add(route_table, NULL, HTTP_GET, "/users/:id", noop, NULL);
-  route_table_add(route_table, NULL, HTTP_PUT, "/users/:id", noop, NULL);
-  route_table_add(route_table, NULL, HTTP_DELETE, "/users/:id", noop, NULL);
-  route_table_add(route_table, NULL, HTTP_GET, "/users/:id/posts", noop, NULL);
-  route_table_add(route_table, NULL, HTTP_POST, "/users/:userId/posts/:postId", noop, NULL);
-  route_table_add(route_table, NULL, HTTP_GET, "/api/:version/:resource", noop, NULL);
-  route_table_add(route_table, NULL, HTTP_GET, "/api/:version/:resource/:id", noop, NULL);
+  route_table_add(route_table, &table_arena, ECEWO_METHOD_GET, "/users/:id", noop, NULL);
+  route_table_add(route_table, &table_arena, ECEWO_METHOD_PUT, "/users/:id", noop, NULL);
+  route_table_add(route_table, &table_arena, ECEWO_METHOD_DELETE, "/users/:id", noop, NULL);
+  route_table_add(route_table, &table_arena, ECEWO_METHOD_GET, "/users/:id/posts", noop, NULL);
+  route_table_add(route_table, &table_arena, ECEWO_METHOD_POST, "/users/:userId/posts/:postId", noop, NULL);
+  route_table_add(route_table, &table_arena, ECEWO_METHOD_GET, "/api/:version/:resource", noop, NULL);
+  route_table_add(route_table, &table_arena, ECEWO_METHOD_GET, "/api/:version/:resource/:id", noop, NULL);
 
   // Wildcard routes
-  route_table_add(route_table, NULL, HTTP_GET, "/files/*", noop, NULL);
-  route_table_add(route_table, NULL, HTTP_PUT, "/static/*", noop, NULL);
+  route_table_add(route_table, &table_arena, ECEWO_METHOD_GET, "/files/*", noop, NULL);
+  route_table_add(route_table, &table_arena, ECEWO_METHOD_PUT, "/static/*", noop, NULL);
 
   return 0;
 }
@@ -101,19 +102,19 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
   if (size < 2)
     return 0;
 
-  uint8_t method_byte = data[0] % 7;
+  uint8_t method_byte = data[0] % ECEWO__METHOD_COUNT;
   const char *path = (const char *)(data + 1);
   size_t path_len = size - 1;
 
   // 1 - Request Matching (Testing existing routes):
-  // The fuzzer takes the first byte of the random input to pick an HTTP 
+  // The fuzzer takes the first byte of the random input to pick an HTTP
   // method. The rest of the input is treated as a URL.
   // We check if the router can handle weird, broken,
-  // or extremely long URLs without crashing when comparing them 
+  // or extremely long URLs without crashing when comparing them
   // against the real routes we defined during startup.
   {
-    ecewo_arena_t arena = {0};
-    tokenized_path_t tok = {0};
+    ecewo_arena_t arena = { 0 };
+    tokenized_path_t tok = { 0 };
 
     tokenize_path(&arena, path, path_len, &tok);
 
@@ -130,33 +131,32 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
   }
 
   // 2 - Dynamic Registration (Testing the route creator):
-  // The fuzzer tries to create a brand new, temporary route using the 
-  // random input as the "pattern". This tests if the system stays stable 
-  // when we feed it "garbage" data (like hidden null characters, massive 
-  // strings, or symbols). We must ensure that creating and then 
-  // immediately deleting these "trash" routes doesn't leak memory or 
+  // The fuzzer tries to create a brand new, temporary route using the
+  // random input as the "pattern". This tests if the system stays stable
+  // when we feed it "garbage" data (like hidden null characters, massive
+  // strings, or symbols). We must ensure that creating and then
+  // immediately deleting these "trash" routes doesn't leak memory or
   // corrupt the internal data structures.
   if (path_len > 0 && path_len <= 512) {
     char pattern[513];
     memcpy(pattern, path, path_len);
     pattern[path_len] = '\0';
 
-    for (int m = 0; m < 7; m++) {
-      route_table_t *tmp = route_table_create(NULL);
-      if (!tmp)
+    for (int m = 0; m < ECEWO__METHOD_COUNT; m++) {
+      ecewo_arena_t tmp_arena = { 0 };
+      route_table_t *tmp = route_table_create(&tmp_arena);
+      if (!tmp) {
+        arena_free(&tmp_arena);
         continue;
+      }
 
-      static const llhttp_method_t methods[7] = {
-        HTTP_DELETE, HTTP_GET, HTTP_HEAD, HTTP_POST,
-        HTTP_PUT,    HTTP_OPTIONS, HTTP_PATCH,
-      };
-
-      route_table_add(tmp, NULL, methods[m], pattern, noop, NULL);
+      route_table_add(tmp, &tmp_arena, (ecewo_method_t)m, pattern, noop, NULL);
 
       // Duplicate registration must not double-free or leak
-      route_table_add(tmp, NULL, methods[m], pattern, noop, NULL);
+      route_table_add(tmp, &tmp_arena, (ecewo_method_t)m, pattern, noop, NULL);
 
       route_table_free(tmp);
+      arena_free(&tmp_arena);
     }
   }
 

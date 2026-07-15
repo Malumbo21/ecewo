@@ -193,15 +193,23 @@ static int dispatch(ecewo__server_t *srv,
     uint8_t allowed = route_table_allowed_methods(srv->route_table, &tok);
     if (allowed) {
       // Generated from ECEWO_METHOD_TABLE; index i matches the method bit set
-      // by route_table_allowed_methods (METHOD_INDEX_*).
-      static const char *method_names[] = {
-#define X(suffix, http_method, name) name,
+      // by route_table_allowed_methods (the ecewo_method_t value).
+      static const char *method_names[ECEWO__METHOD_COUNT] = {
+#define X(suffix, http_method) #suffix,
         ECEWO_METHOD_TABLE(X)
 #undef X
       };
-      char allow_buf[64];
+      // Sized for the worst case (every method allowed): the expansion is the
+      // single string literal "DELETE, GET, ..., QUERY, ", so its sizeof covers
+      // all names joined with ", " plus a trailing separator and the NUL.
+      // Grows with the table, so the writes below can't overflow.
+      char allow_buf[sizeof(
+#define X(suffix, http_method) #suffix ", "
+          ECEWO_METHOD_TABLE(X)
+#undef X
+              )];
       size_t pos = 0;
-      for (int i = 0; i < (int)(sizeof(method_names) / sizeof(method_names[0])); i++) {
+      for (int i = 0; i < ECEWO__METHOD_COUNT; i++) {
         if (allowed & (uint8_t)(1u << i)) {
           if (pos > 0) {
             allow_buf[pos++] = ',';

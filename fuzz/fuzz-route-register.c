@@ -22,8 +22,8 @@
 // ---------------------------------------------------------------------------
 // libFuzzer target for route registration (trie construction).
 //
-// The entire input is treated as a route pattern and registered under all
-// seven HTTP methods on a fresh table, including a duplicate registration.
+// The entire input is treated as a route pattern and registered under every
+// routable HTTP method on a fresh table, including a duplicate registration.
 // The table is immediately freed so ASAN can detect leaks and UAF.
 //
 // Build alongside fuzz-router. See fuzz_router.c for build instructions.
@@ -38,22 +38,14 @@
 #include <string.h>
 
 #include "ecewo.h"
+#include "arena-internal.h"
 #include "route-table.h"
+#include "http-methods.h"
 
 static void noop(ecewo_request_t *req, ecewo_response_t *res) {
   (void)req;
   (void)res;
 }
-
-static const llhttp_method_t methods[7] = {
-  HTTP_DELETE,
-  HTTP_GET,
-  HTTP_HEAD,
-  HTTP_POST,
-  HTTP_PUT,
-  HTTP_OPTIONS,
-  HTTP_PATCH,
-};
 
 int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
   if (size == 0 || size > 512)
@@ -63,16 +55,20 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
   memcpy(pattern, data, size);
   pattern[size] = '\0';
 
-  route_table_t *table = route_table_create(NULL);
-  if (!table)
+  ecewo_arena_t arena = { 0 };
+  route_table_t *table = route_table_create(&arena);
+  if (!table) {
+    arena_free(&arena);
     return 0;
+  }
 
-  for (int m = 0; m < 7; m++) {
-    route_table_add(table, NULL, methods[m], pattern, noop, NULL);
+  for (int m = 0; m < ECEWO__METHOD_COUNT; m++) {
+    route_table_add(table, &arena, (ecewo_method_t)m, pattern, noop, NULL);
     // Duplicate registration must not double-free or leak.
-    route_table_add(table, NULL, methods[m], pattern, noop, NULL);
+    route_table_add(table, &arena, (ecewo_method_t)m, pattern, noop, NULL);
   }
 
   route_table_free(table);
+  arena_free(&arena);
   return 0;
 }

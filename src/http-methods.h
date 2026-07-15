@@ -22,35 +22,56 @@
 #ifndef ECEWO_HTTP_METHODS_H
 #define ECEWO_HTTP_METHODS_H
 
-#include "ecewo.h"  // ecewo_method_t (ECEWO_METHOD_*)
+#include "ecewo.h" // ecewo_method_t (ECEWO_METHOD_*)
 #include "llhttp.h" // llhttp_method_t (HTTP_*)
 
-// Single source of truth for the HTTP methods ecewo can route.
+// Source of truth for the HTTP methods ecewo can route.
 //
-// Every per-method table in the codebase is generated from this list, so a new
-// method is added in exactly one place:
+// Generated from this list:
+//   - ECEWO__METHOD_COUNT and the order asserts below
+//   - method_to_index() and the per-method route arrays (route-table.c)
+//   - the 405 Allow-header names and buffer size        (router.c)
+//   - the fuzzers' method arrays                        (fuzz/)
 //
-//   - the public ecewo_method_t enum                (include/ecewo.h)
-//   - to_llhttp_method()                            (route-register.c)
-//   - METHOD_INDEX_* / METHOD_COUNT / method_to_index() (route-table.c)
-//   - the 405 Allow-header method_names[]           (router.c)
+// Still updated by hand when a method is added:
+//   - the public ecewo_method_t enum and its ECEWO_<METHOD> macro (include/ecewo.h)
+//   - the ecewo-mock plugin's MOCK_* enum
+//   - docs/02.defining-routes.md, docs/16.api-reference.md, README.md
 //
-// X is invoked as X(suffix, http_method, name):
-//   suffix      -> token appended to ECEWO_METHOD_ and METHOD_INDEX_
+// X is invoked as X(suffix, http_method):
+//   suffix      -> token appended to ECEWO_METHOD_; #suffix is also the
+//                  canonical method string for the Allow header
 //   http_method -> the matching llhttp HTTP_* enumerator
-//   name        -> the canonical method string (for the Allow header)
 //
-// The order MUST match ecewo_method_t in include/ecewo.h; route-table.c holds a
-// static_assert per entry that fails to compile if the two ever drift.
+// The order MUST match ecewo_method_t in include/ecewo.h; the asserts below
+// fail to compile if the two ever drift.
 
-#define ECEWO_METHOD_TABLE(X)         \
-  X(DELETE, HTTP_DELETE, "DELETE")    \
-  X(GET, HTTP_GET, "GET")             \
-  X(HEAD, HTTP_HEAD, "HEAD")          \
-  X(POST, HTTP_POST, "POST")          \
-  X(PUT, HTTP_PUT, "PUT")             \
-  X(OPTIONS, HTTP_OPTIONS, "OPTIONS") \
-  X(PATCH, HTTP_PATCH, "PATCH")       \
-  X(QUERY, HTTP_QUERY, "QUERY")
+#define ECEWO_METHOD_TABLE(X) \
+  X(DELETE, HTTP_DELETE)      \
+  X(GET, HTTP_GET)            \
+  X(HEAD, HTTP_HEAD)          \
+  X(POST, HTTP_POST)          \
+  X(PUT, HTTP_PUT)            \
+  X(OPTIONS, HTTP_OPTIONS)    \
+  X(PATCH, HTTP_PATCH)        \
+  X(QUERY, HTTP_QUERY)
+
+// Table position of each entry; the trailing enumerator is the method count,
+// so there is no hand-maintained number to forget.
+enum {
+#define X(suffix, http_method) ECEWO__METHOD_INDEX_##suffix,
+  ECEWO_METHOD_TABLE(X)
+#undef X
+      ECEWO__METHOD_COUNT
+};
+
+// ecewo_method_t values double as indices into the per-method route arrays and
+// as bit positions in the Allow-header bitmask, so every entry must sit at the
+// same position as its public enum value.
+#define X(suffix, http_method)                                                    \
+  _Static_assert((int)ECEWO__METHOD_INDEX_##suffix == (int)ECEWO_METHOD_##suffix, \
+                 #suffix " out of sync with ecewo_method_t (include/ecewo.h)");
+ECEWO_METHOD_TABLE(X)
+#undef X
 
 #endif
