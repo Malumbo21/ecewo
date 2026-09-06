@@ -333,6 +333,15 @@ static void route_node_free_rax_cb(void *data) {
 // Tree matching (recursive with backtracking)
 // -------------------------------------------------------------------------
 
+// Upper bound on nodes visited while matching one request. Literal-vs-param
+// backtracking can branch twice per segment, so a route table with both a
+// literal and a ':param' child at many levels makes the search exponential in
+// path depth. The budget turns that into a bounded miss (404) instead of a
+// request that pins the loop thread.
+#ifndef MAX_MATCH_STEPS
+#define MAX_MATCH_STEPS 4096
+#endif
+
 // allow_wildcards controls whether wildcard handlers are considered.
 // route_table_match runs two passes: first without wildcards (so endpoint
 // matches via params always beat wildcard-zero matches), then with wildcards.
@@ -346,7 +355,12 @@ static bool match_node(route_node_t *node,
                        route_match_t *match,
                        ecewo_arena_t *arena,
                        bool allow_wildcards,
-                       route_node_t **leaf_out) {
+                       route_node_t **leaf_out,
+                       uint32_t *budget) {
+  if (*budget == 0)
+    return false;
+  (*budget)--;
+
   // All segments consumed
   // Check for an endpoint handler
   if (seg_idx == path->count) {
@@ -372,7 +386,7 @@ static bool match_node(route_node_t *node,
   if (node->children) {
     void *child = raxFind(node->children, (unsigned char *)seg->start, seg->len);
     if (child != raxNotFound) {
-      if (match_node((route_node_t *)child, path, seg_idx + 1, method_idx, match, arena, allow_wildcards, leaf_out))
+      if (match_node((route_node_t *)child, path, seg_idx + 1, method_idx, match, arena, allow_wildcards, leaf_out, budget))
         return true;
     }
   }
@@ -384,7 +398,7 @@ static bool match_node(route_node_t *node,
                            NULL, 0,
                            seg->start, seg->len)
         == 0) {
-      if (match_node(node->param_child, path, seg_idx + 1, method_idx, match, arena, allow_wildcards, leaf_out))
+      if (match_node(node->param_child, path, seg_idx + 1, method_idx, match, arena, allow_wildcards, leaf_out, budget))
         return true;
     }
     match->param_count = saved;
@@ -643,10 +657,20 @@ bool route_table_match(route_table_t *table,
 
   // Pass 1: endpoints only (no wildcards): ensures param endpoint matches
   // always beat wildcard-zero matches at a different tree branch.
-  if (!match_node(table->root, tokenized_path, 0, method_idx, match, arena, false, &leaf)) {
+  uint32_t budget = MAX_MATCH_STEPS;
+  if (!match_node(table->root, tokenized_path, 0, method_idx, match, arena, false, &leaf, &budget)) {
     // Pass 2: allow wildcard fallback
-    if (!match_node(table->root, tokenized_path, 0, method_idx, match, arena, true, &leaf))
+    match->param_count = 0;
+    match->params = NULL;
+    match->param_capacity = MAX_INLINE_PARAMS;
+    budget = MAX_MATCH_STEPS;
+    if (!match_node(table->root, tokenized_path, 0, method_idx, match, arena, true, &leaf, &budget))
       return false;
+  }
+
+  if (budget == 0) {
+    LOG_DEBUG("Route match budget exhausted; treating as no match");
+    return false;
   }
 
   // Fill in the deferred param key names from the winning leaf's name table.

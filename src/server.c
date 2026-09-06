@@ -75,14 +75,20 @@ static void runtime_register_app(ecewo__runtime_t *rt, ecewo_app_t *app);
 static void runtime_close_handles(ecewo__runtime_t *rt);
 static void server_destroy(ecewo__server_t *srv);
 static void server_shutdown_listener(ecewo__server_t *srv);
+static void on_server_closed(uv_handle_t *handle);
 
 // ---------------------------------------------------------------------------
 // DATE CACHE HELPERS
 // ---------------------------------------------------------------------------
 
+/* Two slots plus an atomic index, so a reader never observes a half-written
+ * string. The writer formats into the slot that is not currently published and
+ * only then publishes it; readers load the index and read that slot without
+ * taking the lock. The lock still serialises writers against each other. */
 typedef struct {
-  time_t timestamp;
-  char date_str[64];
+  _Atomic time_t timestamp;
+  char date_str[2][64];
+  _Atomic unsigned slot;
   uv_mutex_t mutex;
 } date_cache_t;
 
@@ -94,7 +100,10 @@ static void init_date_cache(void) {
     return;
 
   uv_mutex_init(&date_cache.mutex);
-  date_cache.timestamp = 0;
+  atomic_init(&date_cache.timestamp, 0);
+  atomic_init(&date_cache.slot, 0);
+  date_cache.date_str[0][0] = '\0';
+  date_cache.date_str[1][0] = '\0';
   date_cache_initialized = true;
 }
 
@@ -109,21 +118,38 @@ static void destroy_date_cache(void) {
 const char *get_cached_date(void) {
   time_t now = time(NULL);
 
-  if (date_cache.timestamp == now)
-    return date_cache.date_str;
+  unsigned published = atomic_load_explicit(&date_cache.slot, memory_order_acquire);
+
+  if (atomic_load_explicit(&date_cache.timestamp, memory_order_acquire) == now)
+    return date_cache.date_str[published & 1u];
 
   uv_mutex_lock(&date_cache.mutex);
 
-  if (date_cache.timestamp != now) {
-    struct tm *gmt = gmtime(&now);
-    strftime(date_cache.date_str, sizeof(date_cache.date_str),
-             "%a, %d %b %Y %H:%M:%S GMT", gmt);
-    date_cache.timestamp = now;
+  published = atomic_load_explicit(&date_cache.slot, memory_order_relaxed);
+
+  if (atomic_load_explicit(&date_cache.timestamp, memory_order_relaxed) != now) {
+    unsigned next = (published + 1u) & 1u;
+    struct tm gmt;
+#ifdef _WIN32
+    if (gmtime_s(&gmt, &now) == 0)
+#else
+    if (gmtime_r(&now, &gmt) != NULL)
+#endif
+    {
+      if (strftime(date_cache.date_str[next], sizeof(date_cache.date_str[next]),
+                   "%a, %d %b %Y %H:%M:%S GMT", &gmt)
+          > 0) {
+        /* Publish the finished string before the timestamp that advertises it. */
+        atomic_store_explicit(&date_cache.slot, next, memory_order_release);
+        atomic_store_explicit(&date_cache.timestamp, now, memory_order_release);
+        published = next;
+      }
+    }
   }
 
   uv_mutex_unlock(&date_cache.mutex);
 
-  return date_cache.date_str;
+  return date_cache.date_str[published & 1u];
 }
 
 static void client_free_server(ecewo_client_t *client) {
@@ -198,9 +224,11 @@ static void on_client_closed(uv_handle_t *handle) {
 
     if (srv->shutdown_requested && srv->active_connections == 0
         && srv->force_close_timer) {
-      uv_timer_stop(srv->force_close_timer);
-      uv_close((uv_handle_t *)srv->force_close_timer, (uv_close_cb)free);
+      uv_timer_t *timer = srv->force_close_timer;
       srv->force_close_timer = NULL;
+      uv_timer_stop(timer);
+      if (!uv_is_closing((uv_handle_t *)timer))
+        uv_close((uv_handle_t *)timer, (uv_close_cb)free);
     }
   }
 
@@ -237,9 +265,11 @@ static void close_client(ecewo_client_t *client) {
     return;
 
   if (client->request_timeout_timer) {
-    uv_timer_stop(client->request_timeout_timer);
-    uv_close((uv_handle_t *)client->request_timeout_timer, (uv_close_cb)free);
+    uv_timer_t *timer = client->request_timeout_timer;
     client->request_timeout_timer = NULL;
+    uv_timer_stop(timer);
+    if (!uv_is_closing((uv_handle_t *)timer))
+      uv_close((uv_handle_t *)timer, (uv_close_cb)free);
   }
 
   client->closing = true;
@@ -334,9 +364,11 @@ static int start_cleanup_timer(ecewo__server_t *srv) {
 
 static void stop_cleanup_timer(ecewo__server_t *srv) {
   if (srv->cleanup_timer) {
-    uv_timer_stop(srv->cleanup_timer);
-    uv_close((uv_handle_t *)srv->cleanup_timer, (uv_close_cb)free);
+    uv_timer_t *timer = srv->cleanup_timer;
     srv->cleanup_timer = NULL;
+    uv_timer_stop(timer);
+    if (!uv_is_closing((uv_handle_t *)timer))
+      uv_close((uv_handle_t *)timer, (uv_close_cb)free);
   }
 }
 
@@ -390,6 +422,7 @@ static void client_parser_init(ecewo_client_t *client) {
   client->persistent_settings.on_url = on_url_cb;
   client->persistent_settings.on_header_field = on_header_field_cb;
   client->persistent_settings.on_header_value = on_header_value_cb;
+  client->persistent_settings.on_header_value_complete = on_header_value_complete_cb;
   client->persistent_settings.on_method = on_method_cb;
   client->persistent_settings.on_body = on_body_cb;
   client->persistent_settings.on_headers_complete = on_headers_complete_cb;
@@ -436,6 +469,13 @@ static void close_cb(uv_handle_t *handle) {
   }
 }
 
+// handle->data is not a uniform type: listeners and the framework's own timers
+// store ecewo__server_t/ecewo_client_t/ecewo__runtime_t there, and only the
+// timers created by ecewo_timeout/ecewo_interval own a heap timer_data_t.
+// The teardown walk therefore has to find each handle's owner before closing
+// it - freeing handle->data blindly frees the server, a live client, or the
+// static runtime, and closing the listener as if it were a client reinterprets
+// a bare uv_tcp_t as an ecewo_client_t.
 static void close_walk_cb(uv_handle_t *handle, void *arg) {
   (void)arg;
 
@@ -448,10 +488,56 @@ static void close_walk_cb(uv_handle_t *handle, void *arg) {
     uv_signal_stop((uv_signal_t *)handle);
   }
 
-  if (handle->type == UV_TCP && handle->data != NULL)
-    uv_close(handle, on_client_closed);
-  else
-    uv_close(handle, close_cb);
+  ecewo__runtime_t *rt = &ecewo_runtime;
+
+  // Runtime handles are embedded in the static runtime; nothing to free.
+  if (handle == (uv_handle_t *)&rt->shutdown_async
+      || handle == (uv_handle_t *)&rt->async_work_handle
+      || handle == (uv_handle_t *)&rt->sigint_handle
+      || handle == (uv_handle_t *)&rt->sigterm_handle) {
+    uv_close(handle, NULL);
+    return;
+  }
+
+  for (size_t i = 0; i < rt->app_count; i++) {
+    ecewo_app_t *app = rt->apps[i];
+    ecewo__server_t *srv = app ? app->server : NULL;
+    if (!srv)
+      continue;
+
+    if (handle == (uv_handle_t *)srv->tcp_server) {
+      uv_close(handle, on_server_closed);
+      return;
+    }
+
+    if (handle == (uv_handle_t *)srv->cleanup_timer) {
+      srv->cleanup_timer = NULL;
+      uv_close(handle, (uv_close_cb)free);
+      return;
+    }
+
+    if (handle == (uv_handle_t *)srv->force_close_timer) {
+      srv->force_close_timer = NULL;
+      uv_close(handle, (uv_close_cb)free);
+      return;
+    }
+
+    for (ecewo_client_t *c = srv->client_list_head; c; c = c->next) {
+      if (handle == (uv_handle_t *)&c->handle) {
+        uv_close(handle, on_client_closed);
+        return;
+      }
+      if (handle == (uv_handle_t *)c->request_timeout_timer) {
+        c->request_timeout_timer = NULL;
+        uv_close(handle, (uv_close_cb)free);
+        return;
+      }
+    }
+  }
+
+  // Whatever is left came from ecewo_timeout/ecewo_interval and owns the
+  // timer_data_t behind handle->data.
+  uv_close(handle, close_cb);
 }
 
 static void on_server_closed(uv_handle_t *handle) {
@@ -470,7 +556,8 @@ static void on_async_work_noop(uv_async_t *handle) {
 static void on_force_close_timeout(uv_timer_t *handle) {
   ecewo__server_t *srv = (ecewo__server_t *)handle->data;
   uv_timer_stop(handle);
-  uv_close((uv_handle_t *)handle, (uv_close_cb)free);
+  if (!uv_is_closing((uv_handle_t *)handle))
+    uv_close((uv_handle_t *)handle, (uv_close_cb)free);
   if (!srv)
     return;
 
@@ -826,9 +913,19 @@ static void inspect_loop(uv_loop_t *loop) {
 static void on_request_timeout(uv_timer_t *handle) {
   ecewo_client_t *client = (ecewo_client_t *)handle->data;
 
-  LOG_ERROR("Request timeout - closing connection");
+  LOG_DEBUG("Request timeout - closing connection");
 
   if (client) {
+    // The parser still points into the arena; stop it from writing there.
+    client->persistent_context.discard_body = true;
+    client->persistent_context.on_body_chunk = NULL;
+    client->persistent_context.stream_udata = NULL;
+    client->handler_pending = false;
+    client->pending_req = NULL;
+    client->pending_res = NULL;
+    client->stream_req = NULL;
+    client->stream_res = NULL;
+
     if (client->connection_arena)
       arena_reset(client->connection_arena);
 
@@ -837,7 +934,8 @@ static void on_request_timeout(uv_timer_t *handle) {
   }
 
   uv_timer_stop(handle);
-  uv_close((uv_handle_t *)handle, (uv_close_cb)free);
+  if (!uv_is_closing((uv_handle_t *)handle))
+    uv_close((uv_handle_t *)handle, (uv_close_cb)free);
 }
 
 static void stop_request_timer(ecewo_client_t *client) {
@@ -1009,6 +1107,17 @@ void server_on_read(uv_stream_t *stream, ssize_t nread, const uv_buf_t *buf) {
       break;
 
     case REQUEST_PENDING:
+      // The request is fully parsed but the handler has not answered yet
+      // (async work in flight). Stop reading until the response goes out so
+      // a pipelined request cannot be parsed into the context this request
+      // is still using. end_request() resumes reading.
+      if (!client->closing && !client->taken_over && !client->reads_paused
+          && (client->persistent_context.message_complete
+              || (client->persistent_context.headers_complete
+                  && !client->persistent_context.expects_body))) {
+        uv_read_stop(stream);
+        client->reads_paused = true;
+      }
       break;
 
     default:
@@ -1022,7 +1131,7 @@ void server_on_read(uv_stream_t *stream, ssize_t nread, const uv_buf_t *buf) {
 
 static void on_connection(uv_stream_t *server, int status) {
   if (status < 0) {
-    LOG_ERROR("Connection error");
+    LOG_DEBUG("Connection error");
     return;
   }
 
@@ -1256,6 +1365,15 @@ static void global_runtime_atexit(void) {
   ecewo__runtime_t *rt = &ecewo_runtime;
   if (!rt->initialized)
     return;
+
+  /* exit() was called while uv_run() is still on the stack - almost always
+   * exit() from a worker thread. Closing handles and freeing the loop from
+   * here would race the loop thread, so leave everything to the OS. */
+  if (rt->running) {
+    LOG_ERROR("exit() called while the event loop is running; "
+              "skipping runtime teardown. Call ecewo_shutdown() instead.");
+    return;
+  }
 
   // If the user never called ecewo_run() (or it never returned cleanly), do
   // best-effort cleanup of any registered apps before tearing down the loop.
@@ -1503,9 +1621,14 @@ void ecewo_set_app_data(ecewo_app_t *app, void *key, void *data) {
   }
   if (app->plugin_slot_count >= app->plugin_slot_capacity) {
     int new_cap = app->plugin_slot_capacity == 0 ? 4 : app->plugin_slot_capacity * 2;
-    app->plugin_slots = ecewo_realloc(app->arena, app->plugin_slots,
-                                      (size_t)app->plugin_slot_capacity * sizeof(plugin_slot_t),
-                                      (size_t)new_cap * sizeof(plugin_slot_t));
+    plugin_slot_t *slots = ecewo_realloc(app->arena, app->plugin_slots,
+                                         (size_t)app->plugin_slot_capacity * sizeof(plugin_slot_t),
+                                         (size_t)new_cap * sizeof(plugin_slot_t));
+    if (!slots) {
+      LOG_ERROR("Allocation failed in ecewo_set_app_data");
+      return;
+    }
+    app->plugin_slots = slots;
     app->plugin_slot_capacity = new_cap;
   }
   app->plugin_slots[app->plugin_slot_count].key = key;
@@ -1544,7 +1667,9 @@ static void timer_callback(uv_timer_t *handle) {
 
   if (data && !data->is_interval) {
     uv_timer_stop(handle);
-    uv_close((uv_handle_t *)handle, (uv_close_cb)free);
+    handle->data = NULL;
+    if (!uv_is_closing((uv_handle_t *)handle))
+      uv_close((uv_handle_t *)handle, (uv_close_cb)free);
     free(data);
   }
 }
@@ -1578,7 +1703,8 @@ ecewo_timer_t *ecewo_timeout(ecewo_timer_cb_t callback, uint64_t delay_ms, void 
   timer->data = data;
 
   if (uv_timer_start(timer, timer_callback, delay_ms, 0) != 0) {
-    free(timer);
+    timer->data = NULL;
+    uv_close((uv_handle_t *)timer, (uv_close_cb)free);
     free(data);
     return NULL;
   }
@@ -1615,7 +1741,8 @@ ecewo_timer_t *ecewo_interval(ecewo_timer_cb_t callback, uint64_t interval_ms, v
   timer->data = data;
 
   if (uv_timer_start(timer, timer_callback, interval_ms, interval_ms) != 0) {
-    free(timer);
+    timer->data = NULL;
+    uv_close((uv_handle_t *)timer, (uv_close_cb)free);
     free(data);
     return NULL;
   }
@@ -1636,7 +1763,8 @@ void ecewo_clear_timer(ecewo_timer_t *handle) {
     timer->data = NULL;
   }
 
-  uv_close((uv_handle_t *)timer, (uv_close_cb)free);
+  if (!uv_is_closing((uv_handle_t *)timer))
+    uv_close((uv_handle_t *)timer, (uv_close_cb)free);
 }
 
 bool ecewo_client_is_valid(ecewo_client_t *client) {

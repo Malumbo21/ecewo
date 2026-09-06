@@ -406,10 +406,16 @@ int router(ecewo_client_t *client, const char *request_data, size_t request_len)
     llhttp_resume(ctx->parser);
 
     if (res && res->replied) {
-      if (client->taken_over)
+      if (client->taken_over) {
         retval = REQUEST_PENDING;
-      else
-        retval = res->keep_alive ? REQUEST_KEEP_ALIVE : REQUEST_CLOSE;
+        goto done;
+      }
+      // The response went out before the request was fully read: `left` holds
+      // body (or pipelined) bytes this connection will never consume, and
+      // more may still be in flight. Keeping the connection alive would let
+      // the next read parse those bytes as a fresh request, so close.
+      bool unread_input = (left > 0) || (ctx->expects_body && !ctx->message_complete);
+      retval = (res->keep_alive && !unread_input) ? REQUEST_KEEP_ALIVE : REQUEST_CLOSE;
       goto done;
     }
 
@@ -447,14 +453,14 @@ int router(ecewo_client_t *client, const char *request_data, size_t request_len)
       goto done;
 
     case PARSE_OVERFLOW:
-      LOG_ERROR("Body too large: %s", ctx->error_reason ? ctx->error_reason : "");
+      LOG_DEBUG("Body too large: %s", ctx->error_reason ? ctx->error_reason : "");
       send_error(arena, handle, 413);
       goto done;
 
     case PARSE_PAUSED:
     case PARSE_ERROR:
     default:
-      LOG_ERROR("Parse error after resume: %s",
+      LOG_DEBUG("Parse error after resume: %s",
                 ctx->error_reason ? ctx->error_reason : "unknown");
       send_error(arena, handle, 400);
       goto done;
@@ -467,12 +473,12 @@ int router(ecewo_client_t *client, const char *request_data, size_t request_len)
     goto done;
 
   case PARSE_OVERFLOW:
-    LOG_ERROR("Request too large: %s", ctx->error_reason ? ctx->error_reason : "");
+    LOG_DEBUG("Request too large: %s", ctx->error_reason ? ctx->error_reason : "");
     send_error(NULL, handle, 413);
     goto done;
 
   case PARSE_ERROR:
-    LOG_ERROR("Parse error: %s", ctx->error_reason ? ctx->error_reason : "unknown");
+    LOG_DEBUG("Parse error: %s", ctx->error_reason ? ctx->error_reason : "unknown");
     send_error(NULL, handle, 400);
     goto done;
 
@@ -530,7 +536,7 @@ int router(ecewo_client_t *client, const char *request_data, size_t request_len)
 
   if (http_message_needs_eof(ctx)) {
     if (http_finish_parsing(ctx) != PARSE_SUCCESS) {
-      LOG_ERROR("Finish parse failed: %s", ctx->error_reason ? ctx->error_reason : "");
+      LOG_DEBUG("Finish parse failed: %s", ctx->error_reason ? ctx->error_reason : "");
       send_error(arena, handle, 400);
       goto done;
     }

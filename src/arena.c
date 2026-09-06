@@ -30,6 +30,10 @@
 #include "arena-internal.h"
 
 static inline arena_region_t *new_region(size_t capacity) {
+  // capacity is a word count; reject anything whose byte size would wrap.
+  if (capacity > (SIZE_MAX - sizeof(arena_region_t)) / sizeof(uintptr_t))
+    return NULL;
+
   size_t size_bytes = sizeof(arena_region_t) + sizeof(uintptr_t) * capacity;
   arena_region_t *r = (arena_region_t *)malloc(size_bytes);
 
@@ -60,6 +64,15 @@ bool new_region_to(arena_region_t **begin, arena_region_t **end, size_t capacity
 }
 
 void *ecewo_alloc(ecewo_arena_t *arena, size_t size_bytes) {
+  if (!arena)
+    return NULL;
+
+  // Rounding up to whole words must not wrap: a wrapped size would hand back
+  // a block far smaller than the caller asked for and every write past it
+  // would corrupt the arena.
+  if (size_bytes > SIZE_MAX - (sizeof(uintptr_t) - 1))
+    return NULL;
+
   size_t size = (size_bytes + sizeof(uintptr_t) - 1) / sizeof(uintptr_t);
 
   if (arena->end == NULL) {
@@ -72,8 +85,13 @@ void *ecewo_alloc(ecewo_arena_t *arena, size_t size_bytes) {
       return NULL;
   }
 
+  if (size > SIZE_MAX - arena->end->count)
+    return NULL;
+
   while (arena->end->count + size > arena->end->capacity && arena->end->next != NULL) {
     arena->end = arena->end->next;
+    if (size > SIZE_MAX - arena->end->count)
+      return NULL;
   }
 
   if (arena->end->count + size > arena->end->capacity) {
@@ -97,16 +115,17 @@ void *ecewo_realloc(ecewo_arena_t *arena, void *oldptr, size_t oldsz, size_t new
   if (newsz <= oldsz)
     return oldptr;
 
+  if (!oldptr)
+    oldsz = 0;
+
   void *newptr = ecewo_alloc(arena, newsz);
 
   if (!newptr)
     return NULL;
 
-  char *newptr_char = (char *)newptr;
-  char *oldptr_char = (char *)oldptr;
-  for (size_t i = 0; i < oldsz; ++i) {
-    newptr_char[i] = oldptr_char[i];
-  }
+  if (oldsz > 0)
+    memcpy(newptr, oldptr, oldsz);
+
   return newptr;
 }
 
@@ -118,7 +137,7 @@ static size_t arena_strlen(const char *s) {
 }
 
 char *ecewo_strdup(ecewo_arena_t *arena, const char *cstr) {
-  if (!cstr)
+  if (!arena || !cstr)
     return NULL;
 
   size_t n = arena_strlen(cstr);
@@ -133,7 +152,7 @@ char *ecewo_strdup(ecewo_arena_t *arena, const char *cstr) {
 }
 
 void *ecewo_memdup(ecewo_arena_t *arena, void *data, size_t size) {
-  if (!data || size == 0)
+  if (!arena || !data || size == 0)
     return NULL;
 
   void *ptr = ecewo_alloc(arena, size);
@@ -144,6 +163,9 @@ void *ecewo_memdup(ecewo_arena_t *arena, void *data, size_t size) {
 }
 
 char *ecewo_sprintf(ecewo_arena_t *arena, const char *format, ...) {
+  if (!arena || !format)
+    return NULL;
+
   va_list args, args_copy;
   va_start(args, format);
   va_copy(args_copy, args);

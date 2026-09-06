@@ -47,12 +47,58 @@ static void end_request(ecewo_client_t *client) {
 
   client->request_in_progress = false;
 
+  // Nothing from the finished request may be reached again: the arena that
+  // backed them is reset the moment the next request starts.
+  client->handler_pending = false;
+  client->pending_handler = NULL;
+  client->pending_mw = NULL;
+  client->pending_req = NULL;
+  client->pending_res = NULL;
+  client->stream_req = NULL;
+  client->stream_res = NULL;
+
   if (client->request_timeout_timer) {
-    uv_timer_stop(client->request_timeout_timer);
-    uv_close((uv_handle_t *)client->request_timeout_timer, (uv_close_cb)free);
+    uv_timer_t *timer = client->request_timeout_timer;
     client->request_timeout_timer = NULL;
-    ecewo_client_unref(client);
+    uv_timer_stop(timer);
+    if (!uv_is_closing((uv_handle_t *)timer))
+      uv_close((uv_handle_t *)timer, (uv_close_cb)free);
   }
+
+  // Reading was stopped while this request was outstanding; take the next one.
+  if (client->reads_paused) {
+    client->reads_paused = false;
+    if (!client->closing && !client->taken_over
+        && !uv_is_closing((uv_handle_t *)&client->handle)) {
+      uv_read_start((uv_stream_t *)&client->handle,
+                    server_alloc_buffer,
+                    server_on_read);
+    }
+  }
+}
+
+// Called as soon as a response is handed to libuv. From here on the request
+// arena is reset, so the parser must stop copying body bytes into it, and the
+// connection can no longer be kept alive if the request was not fully read:
+// the unread bytes would otherwise be parsed as the next request.
+static void response_sent(ecewo_client_t *client, ecewo_response_t *res) {
+  if (!client)
+    return;
+
+  http_context_t *ctx = &client->persistent_context;
+
+  if (res && ctx->expects_body && !ctx->message_complete)
+    res->keep_alive = false;
+
+  ctx->discard_body = true;
+  ctx->on_body_chunk = NULL;
+  ctx->stream_udata = NULL;
+}
+
+static ecewo_client_t *client_of(const ecewo_response_t *res) {
+  if (!res || !res->ecewo__client_socket)
+    return NULL;
+  return (ecewo_client_t *)((uv_tcp_t *)res->ecewo__client_socket)->data;
 }
 
 static void write_completion_cb(uv_write_t *req, int status) {
@@ -119,8 +165,24 @@ void send_error(ecewo_arena_t *arena, uv_tcp_t *ecewo__client_socket, int error_
     return;
   }
 
+  response_sent((ecewo_client_t *)ecewo__client_socket->data, NULL);
+
   const char *date_str = get_cached_date();
-  const char *status_text = (error_code == 500) ? "Internal Server Error" : "Bad Request";
+  const char *status_text;
+  switch (error_code) {
+  case 500:
+    status_text = "Internal Server Error";
+    break;
+  case 413:
+    status_text = "Payload Too Large";
+    break;
+  case 408:
+    status_text = "Request Timeout";
+    break;
+  default:
+    status_text = "Bad Request";
+    break;
+  }
   const char *body = status_text;
   size_t body_len = strlen(body);
 
@@ -204,6 +266,8 @@ void ecewo_send(ecewo_response_t *res, int status, const void *body, size_t body
 
   if (!body)
     body_len = 0;
+
+  response_sent(client_of(res), res);
 
   size_t original_body_len = body_len;
   if (res->is_head_request || (status >= 100 && status < 200) || status == 204) {

@@ -162,6 +162,13 @@ struct ecewo_client_s {
   bool parser_initialized;
   bool request_in_progress; // True while parsing a multi-packet request
 
+  // Reads are stopped between "request fully parsed" and "response written".
+  // Without this a pipelined request would be parsed into the connection
+  // context that the unanswered request is still using: its URL and headers
+  // would be appended to the in-flight ones and a second handler would run
+  // against the same arena. Cleared (and reading resumed) in end_request().
+  bool reads_paused;
+
   bool taken_over;
   void *takeover_user_data;
   void (*takeover_close_cb)(uv_handle_t *handle);

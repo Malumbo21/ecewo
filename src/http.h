@@ -82,9 +82,27 @@ typedef struct {
   bool keep_alive;
   bool headers_complete;
 
+  // Set at headers-complete when the request declares a body (non-zero
+  // Content-Length or chunked). The router uses it to decide whether a
+  // response emitted before the body was consumed leaves unread request
+  // bytes on the socket, which must never be parsed as the next request.
+  bool expects_body;
+
+  // Set once a response has been written for this request. Any body bytes
+  // that still arrive are dropped instead of being copied into the request
+  // arena, which ecewo_send has already handed back.
+  bool discard_body;
+
+  // llhttp delivers a header name or value in as many fragments as the
+  // TCP reads split it into, so both are accumulated here and the pair is
+  // committed to `headers` from on_header_value_complete_cb.
   char *current_header_field;
   size_t header_field_length;
   size_t header_field_capacity;
+
+  char *current_header_value;
+  size_t header_value_length;
+  size_t header_value_capacity;
 
   llhttp_errno_t last_error;
   const char *error_reason;
@@ -112,6 +130,7 @@ int on_header_field_cb(llhttp_t *parser, const char *at, size_t length);
 int on_header_value_cb(llhttp_t *parser, const char *at, size_t length);
 int on_method_cb(llhttp_t *parser, const char *at, size_t length);
 int on_body_cb(llhttp_t *parser, const char *at, size_t length);
+int on_header_value_complete_cb(llhttp_t *parser);
 int on_headers_complete_cb(llhttp_t *parser);
 int on_message_complete_cb(llhttp_t *parser);
 

@@ -48,7 +48,12 @@ static inline void url_decode(char *str, bool plus_as_space) {
     if (*src == '%') {
       int hi = (src[1] != '\0') ? hex_digit(src[1]) : -1;
       int lo = (hi >= 0 && src[2] != '\0') ? hex_digit(src[2]) : -1;
-      if (hi >= 0 && lo >= 0) {
+      // %00 is left encoded on purpose. Decoding it would splice a NUL into
+      // a string every downstream C consumer treats as terminated there,
+      // truncating paths and values after they were validated.
+      if (hi == 0 && lo == 0) {
+        *dst++ = *src++;
+      } else if (hi >= 0 && lo >= 0) {
         *dst++ = (unsigned char)((hi << 4) | lo);
         src += 3;
       } else {

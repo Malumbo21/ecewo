@@ -211,6 +211,10 @@ int on_url_cb(llhttp_t *parser, const char *at, size_t length) {
   return HPE_OK;
 }
 
+// llhttp splits a header name across as many on_header_field callbacks as the
+// TCP reads split it into, so fragments are appended rather than replacing
+// what came before. The buffer is cleared once the pair is committed in
+// on_header_value_complete_cb.
 int on_header_field_cb(llhttp_t *parser, const char *at, size_t length) {
   if (!parser || !parser->data || !at || length == 0)
     return HPE_INTERNAL;
@@ -222,15 +226,14 @@ int on_header_field_cb(llhttp_t *parser, const char *at, size_t length) {
     return HPE_USER;
   }
 
-  if (length > MAX_HEADER_SIZE) {
+  if (context->header_field_length + length > MAX_HEADER_SIZE) {
     llhttp_set_error_reason(parser, ERROR_REASON_HEADER_TOO_LARGE);
     return HPE_USER;
   }
 
-  context->header_field_length = 0;
-
   int result = ensure_buffer_capacity(context->arena, &context->current_header_field,
-                                      &context->header_field_capacity, 0, length);
+                                      &context->header_field_capacity,
+                                      context->header_field_length, length);
   if (result == -2) {
     llhttp_set_error_reason(parser, ERROR_REASON_HEADER_TOO_LARGE);
     return HPE_USER;
@@ -241,9 +244,9 @@ int on_header_field_cb(llhttp_t *parser, const char *at, size_t length) {
     return HPE_INTERNAL;
   }
 
-  memmove(context->current_header_field, at, length);
-  context->header_field_length = length;
-  context->current_header_field[length] = '\0';
+  memmove(context->current_header_field + context->header_field_length, at, length);
+  context->header_field_length += length;
+  context->current_header_field[context->header_field_length] = '\0';
 
   return HPE_OK;
 }
@@ -255,7 +258,7 @@ int ensure_array_capacity(ecewo_arena_t *arena, ecewo__req_t *array) {
   if (array->count < array->capacity)
     return 0;
 
-  if (array->capacity > MAX_HEADERS_COUNT / 2)
+  if (array->capacity >= MAX_HEADERS_COUNT)
     return -1;
 
   int new_capacity = array->capacity == 0 ? 16 : array->capacity * 2;
@@ -283,9 +286,13 @@ int ensure_array_capacity(ecewo_arena_t *arena, ecewo__req_t *array) {
   return 0;
 }
 
+// Same fragmentation rule as on_header_field_cb: append, never replace.
 int on_header_value_cb(llhttp_t *parser, const char *at, size_t length) {
-  if (!parser || !parser->data || !at || length == 0)
+  if (!parser || !parser->data || !at)
     return HPE_INTERNAL;
+
+  if (length == 0)
+    return HPE_OK;
 
   http_context_t *context = (http_context_t *)parser->data;
 
@@ -294,36 +301,86 @@ int on_header_value_cb(llhttp_t *parser, const char *at, size_t length) {
     return HPE_USER;
   }
 
+  if (context->header_value_length + length > MAX_HEADER_SIZE) {
+    llhttp_set_error_reason(parser, ERROR_REASON_HEADER_TOO_LARGE);
+    return HPE_USER;
+  }
+
+  int result = ensure_buffer_capacity(context->arena, &context->current_header_value,
+                                      &context->header_value_capacity,
+                                      context->header_value_length, length);
+  if (result == -2) {
+    llhttp_set_error_reason(parser, ERROR_REASON_HEADER_TOO_LARGE);
+    return HPE_USER;
+  }
+
+  if (result != 0) {
+    llhttp_set_error_reason(parser, ERROR_REASON_MEMORY_ALLOCATION);
+    return HPE_INTERNAL;
+  }
+
+  memmove(context->current_header_value + context->header_value_length, at, length);
+  context->header_value_length += length;
+  context->current_header_value[context->header_value_length] = '\0';
+
+  return HPE_OK;
+}
+
+// Fired once per header, after every field and value fragment has arrived.
+// This is the only place a header pair is appended to the request, so a
+// header split across TCP reads yields exactly one entry, not one per
+// fragment.
+int on_header_value_complete_cb(llhttp_t *parser) {
+  if (!parser || !parser->data)
+    return HPE_INTERNAL;
+
+  http_context_t *context = (http_context_t *)parser->data;
+
+  size_t key_len = context->header_field_length;
+  size_t val_len = context->header_value_length;
+
+  context->header_field_length = 0;
+  context->header_value_length = 0;
+
+  if (key_len == 0)
+    return HPE_OK;
+
+  if (context->headers.count >= MAX_HEADERS_COUNT) {
+    llhttp_set_error_reason(parser, ERROR_REASON_TOO_MANY_HEADERS);
+    return HPE_USER;
+  }
+
   if (ensure_array_capacity(context->arena, &context->headers) != 0) {
     llhttp_set_error_reason(parser, ERROR_REASON_MEMORY_ALLOCATION);
     return HPE_INTERNAL;
   }
 
-  char *key = ecewo_alloc(context->arena, context->header_field_length + 1);
+  char *key = ecewo_alloc(context->arena, key_len + 1);
   if (!key) {
     llhttp_set_error_reason(parser, ERROR_REASON_MEMORY_ALLOCATION);
     return HPE_INTERNAL;
   }
 
-  memcpy(key, context->current_header_field, context->header_field_length);
-  key[context->header_field_length] = '\0';
+  memcpy(key, context->current_header_field, key_len);
+  key[key_len] = '\0';
 
   // Header field names are case-insensitive.
   // Normalize once here so lookups can use strcmp instead of strcasecmp.
-  for (size_t i = 0; i < context->header_field_length; i++) {
+  for (size_t i = 0; i < key_len; i++) {
     unsigned char c = (unsigned char)key[i];
     if (c >= 'A' && c <= 'Z')
       key[i] = (char)(c + ('a' - 'A'));
   }
 
-  char *val = ecewo_alloc(context->arena, length + 1);
+  char *val = ecewo_alloc(context->arena, val_len + 1);
   if (!val) {
     llhttp_set_error_reason(parser, ERROR_REASON_MEMORY_ALLOCATION);
     return HPE_INTERNAL;
   }
 
-  memcpy(val, at, length);
-  val[length] = '\0';
+  if (val_len > 0)
+    memcpy(val, context->current_header_value, val_len);
+  val[val_len] = '\0';
 
   context->headers.items[context->headers.count].key = key;
   context->headers.items[context->headers.count].value = val;
@@ -373,6 +430,13 @@ int on_body_cb(llhttp_t *parser, const char *at, size_t length) {
 
   http_context_t *context = (http_context_t *)parser->data;
 
+  // The response for this request has already been written, which handed the
+  // request arena back to the pool. Nothing here may touch arena memory any
+  // more, so the remaining body bytes are dropped; the router closes the
+  // connection rather than letting them be read as the next request.
+  if (context->discard_body)
+    return HPE_OK;
+
   // Streaming mode (opt-in via body_stream middleware)
   if (context->on_body_chunk) {
     int result = context->on_body_chunk(context->stream_udata, (const uint8_t *)at, length);
@@ -386,7 +450,7 @@ int on_body_cb(llhttp_t *parser, const char *at, size_t length) {
   }
 
   if (context->body_length + length > BUFFERED_BODY_MAX_SIZE) {
-    LOG_ERROR("Buffered body size limit exceeded: received %zu, limit %zu. Set BUFFERED_BODY_MAX_SIZE to increase the limit.",
+    LOG_DEBUG("Buffered body size limit exceeded: received %zu, limit %zu. Set BUFFERED_BODY_MAX_SIZE to increase the limit.",
               context->body_length + length, (size_t)BUFFERED_BODY_MAX_SIZE);
     llhttp_set_error_reason(parser, ERROR_REASON_PAYLOAD_TOO_LARGE);
     return HPE_USER;
@@ -423,10 +487,21 @@ int on_headers_complete_cb(llhttp_t *parser) {
 
   http_context_t *context = (http_context_t *)parser->data;
 
+  // A trailing header that produced no on_header_value_complete callback
+  // (malformed input) must not leak into the next request's field buffer.
+  context->header_field_length = 0;
+  context->header_value_length = 0;
+
   context->http_major = llhttp_get_http_major(parser);
   context->http_minor = llhttp_get_http_minor(parser);
   context->keep_alive = llhttp_should_keep_alive(parser);
   context->headers_complete = 1;
+
+  // Whether request bytes still follow the headers. The router needs this to
+  // know that replying now (404, 405, an auth middleware, ...) would leave
+  // unread body bytes on the connection.
+  context->expects_body = (parser->content_length > 0)
+      || ((parser->flags & F_CHUNKED) != 0);
 
   // Parse path and query string
   if (context->url && context->url_length > 0) {
@@ -470,30 +545,44 @@ void http_context_init(http_context_t *context,
   context->settings = settings;
   context->parser->data = context;
 
-  context->url_capacity = 512;
-  context->url = ecewo_alloc(arena, context->url_capacity);
-  if (context->url)
+  // On allocation failure the capacity must stay 0: the ensure_*_capacity
+  // helpers treat a non-zero capacity as "there is room" and would write
+  // through the NULL pointer.
+  context->url = ecewo_alloc(arena, 512);
+  if (context->url) {
+    context->url_capacity = 512;
     context->url[0] = '\0';
+  }
 
-  context->method_capacity = 32;
-  context->method = ecewo_alloc(arena, context->method_capacity);
-  if (context->method)
+  context->method = ecewo_alloc(arena, 32);
+  if (context->method) {
+    context->method_capacity = 32;
     context->method[0] = '\0';
+  }
 
-  context->header_field_capacity = 128;
-  context->current_header_field = ecewo_alloc(arena, context->header_field_capacity);
-  if (context->current_header_field)
+  context->current_header_field = ecewo_alloc(arena, 128);
+  if (context->current_header_field) {
+    context->header_field_capacity = 128;
     context->current_header_field[0] = '\0';
+  }
 
-  context->body_capacity = 1024;
-  context->body = ecewo_alloc(arena, context->body_capacity);
-  if (context->body)
+  context->current_header_value = ecewo_alloc(arena, 256);
+  if (context->current_header_value) {
+    context->header_value_capacity = 256;
+    context->current_header_value[0] = '\0';
+  }
+
+  context->body = ecewo_alloc(arena, 1024);
+  if (context->body) {
+    context->body_capacity = 1024;
     context->body[0] = '\0';
+  }
 
-  context->headers.capacity = 32;
-  context->headers.items = ecewo_alloc(arena, context->headers.capacity * sizeof(ecewo__req_item_t));
-  if (context->headers.items)
-    memset(context->headers.items, 0, context->headers.capacity * sizeof(ecewo__req_item_t));
+  context->headers.items = ecewo_alloc(arena, 32 * sizeof(ecewo__req_item_t));
+  if (context->headers.items) {
+    context->headers.capacity = 32;
+    memset(context->headers.items, 0, 32 * sizeof(ecewo__req_item_t));
+  }
 
   context->keep_alive = 1;
   context->last_error = HPE_OK;
